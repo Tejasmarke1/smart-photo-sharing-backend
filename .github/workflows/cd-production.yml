@@ -1,0 +1,43 @@
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Build and push images
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.ref_name }}
+        run: |
+          docker build -f infra/docker/api.Dockerfile -t $ECR_REGISTRY/kwikpic-api:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/kwikpic-api:$IMAGE_TAG
+          
+          docker build -f infra/docker/worker.Dockerfile -t $ECR_REGISTRY/kwikpic-worker:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/kwikpic-worker:$IMAGE_TAG
+      
+      - name: Deploy to EKS
+        run: |
+          aws eks update-kubeconfig --name kwikpic-production --region ap-south-1
+          kubectl set image deployment/api api=$ECR_REGISTRY/kwikpic-api:$IMAGE_TAG -n production
+          kubectl set image deployment/worker worker=$ECR_REGISTRY/kwikpic-worker:$IMAGE_TAG -n production
+          kubectl rollout status deployment/api -n production
+          kubectl rollout status deployment/worker -n production

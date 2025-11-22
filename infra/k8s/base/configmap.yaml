@@ -1,0 +1,8 @@
+﻿apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kwikpic-config
+data:
+  redis-url: "redis://redis:6379/0"
+  environment: "production"
+  aws-region: "ap-south-1"
