@@ -1,26 +1,24 @@
-version: '3.8'
-
-services:
+﻿services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: kwikpic_postgres
+    container_name: backend_postgres
     environment:
-      POSTGRES_USER: kwikpic
-      POSTGRES_PASSWORD: kwikpic
-      POSTGRES_DB: kwikpic
+      POSTGRES_USER: backend
+      POSTGRES_PASSWORD: backend
+      POSTGRES_DB: backend
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kwikpic"]
+      test: ["CMD-SHELL", "pg_isready -U backend"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: kwikpic_redis
+    container_name: backend_redis
     ports:
       - "6379:6379"
     volumes:
@@ -33,7 +31,7 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: kwikpic_minio
+    container_name: backend_minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -48,67 +46,6 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
-
-  api:
-    build:
-      context: .
-      dockerfile: infra/docker/api.Dockerfile
-    container_name: kwikpic_api
-    command: uvicorn src.app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-
-  celery_worker:
-    build:
-      context: .
-      dockerfile: infra/docker/worker.Dockerfile
-    container_name: kwikpic_worker
-    command: celery -A src.tasks.celery_app worker --loglevel=info --concurrency=2
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    depends_on:
-      - postgres
-      - redis
-      - minio
-
-  celery_beat:
-    build:
-      context: .
-      dockerfile: infra/docker/worker.Dockerfile
-    container_name: kwikpic_beat
-    command: celery -A src.tasks.celery_app beat --loglevel=info
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    depends_on:
-      - redis
-
-  flower:
-    build:
-      context: .
-      dockerfile: infra/docker/worker.Dockerfile
-    container_name: kwikpic_flower
-    command: celery -A src.tasks.celery_app flower --port=5555
-    ports:
-      - "5555:5555"
-    env_file:
-      - .env
-    depends_on:
-      - redis
 
 volumes:
   postgres_data:
