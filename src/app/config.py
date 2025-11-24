@@ -1,53 +1,107 @@
-from pydantic import BaseSettings,Field,PostgresDsn,EmailStr
-from typing import List
-from functools import lru_cache
-import os
+﻿"""Application configuration using Pydantic Settings."""
+from typing import Optional, List
+from pydantic import Field, field_validator, computed_field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+import warnings
+warnings.filterwarnings('ignore', message='.*MINGW.*')
+
 
 class Settings(BaseSettings):
-    APP_Name: str = Field(..., env="APP_NAME")
-    ENVIRONMENT : str = Field(..., env="ENVIRONMENT")
-    DEBUG: bool = Field(True, env="DEBUG")
+    """Application settings."""
     
-    # CORS
-    BACKEND_CORS_ORIGINS: List[str] = Field([], env="BACKEND_CORS_ORIGINS")
-    # API prefix
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
     
+    # Application
+    APP_NAME: str = "backend"
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = True
+    SECRET_KEY: str = "change-me-in-production"
     API_V1_PREFIX: str = "/api/v1"
     
     # Database
-    DATABASE_URL: PostgresDsn = Field(..., env="DATABASE_URL")
+    DB_USER: str = "backend"
+    DB_PASSWORD: str = "backend"
+    DB_HOST: str = "localhost"
+    DB_PORT: str = "5433"
+    DB_NAME: str = "backend"
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 10
     
+    @computed_field
+    @property
+    def DATABASE_URL(self) -> str:
+        """Construct database URL from components."""
+        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
     
     # Redis
-    REDIS_URL: str = Field("redis://localhost:6379/0", env="REDIS_URL")
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: str = "6379"
+    REDIS_DB: str = "0"
+    CELERY_BROKER_DB: str = "1"
+    CELERY_RESULT_DB: str = "2"
     
-    # JWT
-    SECRET_KEY: str = Field(..., env="SECRET_KEY")
-    JWT_SECRET_KEY: str = Field(..., env="JWT_SECRET_KEY")
+    @computed_field
+    @property
+    def REDIS_URL(self) -> str:
+        """Construct Redis URL."""
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+    
+    @computed_field
+    @property
+    def CELERY_BROKER_URL(self) -> str:
+        """Construct Celery broker URL."""
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.CELERY_BROKER_DB}"
+    
+    @computed_field
+    @property
+    def CELERY_RESULT_BACKEND(self) -> str:
+        """Construct Celery result backend URL."""
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.CELERY_RESULT_DB}"
+    
+    # AWS/S3
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "ap-south-1"
+    S3_BUCKET: str = "backend-photos"
+    S3_ENDPOINT_URL: Optional[str] = None
+    CDN_BASE_URL: Optional[str] = None
+    
+    # Authentication
+    JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
-    # Email
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USER: Optional[EmailStr] = None
-    SMTP_PASSWORD: Optional[str] = None
-    EMAILS_FROM: Optional[EmailStr] = None
-    EMAIL_TEMPLATES_DIR: str = "./app/email_templates"
+    # Payments (Razorpay)
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
     
+    # WhatsApp
+    WHATSAPP_API_KEY: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        
+    # Face Detection/Recognition
+    FACE_DETECTION_MODEL: str = "retinaface"
+    FACE_EMBEDDING_MODEL: str = "arcface"
+    EMBEDDING_DIMENSION: int = 512
+    FACE_CONFIDENCE_THRESHOLD: float = 0.9
+    FACE_MATCH_THRESHOLD: float = 0.6
+    
+    # Monitoring
+    SENTRY_DSN: Optional[str] = None
+    ENABLE_PROMETHEUS: bool = True
+    
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+    UPLOAD_RATE_LIMIT: int = 10
+    SEARCH_RATE_LIMIT: int = 20
 
-@lru_cache()
-def get_settings():
-    return Settings()
 
-
-Settings = get_settings()
-
-    
-    
+settings = Settings()
