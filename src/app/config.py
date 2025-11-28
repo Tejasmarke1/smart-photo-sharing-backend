@@ -39,6 +39,11 @@ class Settings(BaseSettings):
         """Construct database URL from components."""
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
     
+    
+    #REsend Email Service
+    RESEND_API_KEY: str = "re_Z85ezC4T_EHzN9W7Asr7XLxeuBqChH4J3"
+    RESEND_EMAIL_FROM: str = "onboarding@resend.dev"
+    
     # Redis
     REDIS_HOST: str = "localhost"
     REDIS_PORT: str = "6379"
