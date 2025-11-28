@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Database
     DB_USER: str = "backend"
     DB_PASSWORD: str = "backend"
-    DB_HOST: str = "localhost"
+    DB_HOST: str = "127.0.0.1"
     DB_PORT: str = "5433"
     DB_NAME: str = "backend"
     DB_POOL_SIZE: int = 20

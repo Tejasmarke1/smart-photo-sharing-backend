@@ -6,7 +6,7 @@ from pgvector.sqlalchemy import Vector
 import uuid
 
 # FIXED: import Base from db.base (not src.db.base)
-from db.base import Base
+from src.db.base import Base
 from .base import TimestampMixin
 
 

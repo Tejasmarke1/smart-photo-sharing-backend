@@ -7,7 +7,7 @@ import uuid
 from src.db.base import Base
 from .base import TimestampMixin, SoftDeleteMixin
 from .enums import UserRole
-from db.base import Base
+from src.db.base import Base
 
 
 class User(Base, TimestampMixin, SoftDeleteMixin):
@@ -19,7 +19,7 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     phone = Column(String(20), unique=True, nullable=True, index=True)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=False)   
     role = Column(SQLEnum(UserRole), default=UserRole.guest, nullable=False, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)

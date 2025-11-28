@@ -1,9 +1,10 @@
 from fastapi import APIRouter
-from api.v1.endpoints import auth, albums, photos, uploads, faces, search, payments
+from src.api.v1.endpoints import auth, albums, photos, uploads, faces, search, payments
+
 
 api_router = APIRouter()
 
-api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
 api_router.include_router(albums.router, prefix="/albums", tags=["albums"])
 api_router.include_router(photos.router, prefix="/photos", tags=["photos"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])

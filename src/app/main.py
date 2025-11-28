@@ -1,10 +1,10 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 
-from app.config import settings
-from api.v1.router import api_router
+from src.app.config import settings
+from src.api.v1.router import api_router
 
 
 @asynccontextmanager

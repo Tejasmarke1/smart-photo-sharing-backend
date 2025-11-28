@@ -6,7 +6,7 @@ import uuid
 
 from src.db.base import Base
 from .base import TimestampMixin, SoftDeleteMixin
-from db.base import Base
+
 
 
 class Person(Base, TimestampMixin, SoftDeleteMixin):

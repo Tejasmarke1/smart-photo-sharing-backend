@@ -7,7 +7,7 @@ import uuid
 from src.db.base import Base
 from .base import TimestampMixin
 from .enums import PaymentStatus
-from db.base import Base
+
 
 
 class Payment(Base, TimestampMixin):

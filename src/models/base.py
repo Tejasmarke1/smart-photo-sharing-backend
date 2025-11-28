@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 from sqlalchemy import Column, DateTime
 from sqlalchemy.ext.declarative import declared_attr
-from db.base import Base
+from src.db.base import Base
 
 
 class TimestampMixin:

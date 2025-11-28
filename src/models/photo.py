@@ -7,7 +7,7 @@ import uuid
 from src.db.base import Base
 from .base import TimestampMixin, SoftDeleteMixin
 from .enums import PhotoStatus
-from db.base import Base
+
 
 
 class Photo(Base, TimestampMixin, SoftDeleteMixin):
