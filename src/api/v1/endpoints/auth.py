@@ -31,6 +31,12 @@ from src.core.security import (
 )
 from src.api.deps import get_current_user, get_client_ip, get_user_agent
 
+from src.core.rate_limiter import (
+    can_send_otp as redis_can_send_otp,
+    record_failed_verify,
+    clear_verify_attempts
+)
+
 router = APIRouter()
 
 
@@ -44,14 +50,33 @@ async def send_otp(
     """
     Send OTP to email or phone.
     
-    - Checks if user exists
+    - Checks rate limits (per email/phone)
     - Generates and sends OTP
     - Returns expiry time
     """
     ip_address = get_client_ip(http_request)
     user_agent = get_user_agent(http_request)
-    
-    # Create OTP
+
+    # Build identifier for rate limiter
+    if request.email:
+        identifier = f"email:{request.email.lower()}"
+    elif request.phone:
+        # normalize phone format if you do so elsewhere (E.164 recommended)
+        identifier = f"phone:{request.phone}"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email or phone is required")
+
+    # Check rate limit for sending OTP
+    allowed, retry_after = await redis_can_send_otp(identifier)
+    if not allowed:
+        # Return 429 with Retry-After header so clients can display how long to wait
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many OTP requests. Retry after {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)}
+        )
+
+    # Create OTP (persisted by OTPService)
     otp, otp_code = OTPService.create_otp(
         db=db,
         email=request.email,
@@ -60,10 +85,10 @@ async def send_otp(
         ip_address=ip_address,
         user_agent=user_agent
     )
-    
-    # Send OTP via appropriate channel
+
+    # Send OTP via appropriate channel in background
     notification_service = NotificationService()
-    
+
     if request.email:
         background_tasks.add_task(
             notification_service.send_email_otp,
@@ -76,11 +101,11 @@ async def send_otp(
             request.phone,
             otp_code
         )
-    
+
     return SendOTPResponse(
         success=True,
         message=f"OTP sent to {request.email or request.phone}",
-        expires_in=300,  # 5 minutes
+        expires_in=300,  # 5 minutes (keep consistent with OTPService)
         can_resend_in=60
     )
 
@@ -93,36 +118,56 @@ async def verify_otp(
     """
     Verify OTP and check if user exists.
     
+    - Throttles repeated failed verification attempts (brute-force protection)
     - If user exists: Return success, user can login
     - If user doesn't exist: Return temp token for signup
     """
-    # Verify OTP
+    # Build identifier for rate limiter (must match send identifier format)
+    if request.email:
+        identifier = f"email:{request.email.lower()}"
+    elif request.phone:
+        identifier = f"phone:{request.phone}"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email or phone is required")
+
+    # Verify OTP using OTPService (should check persistence & expiry)
     success, message = OTPService.verify_otp(
         db=db,
         email=request.email,
         phone=request.phone,
         otp_code=request.otp_code
     )
-    
+
     if not success:
+        # Record failed attempt and possibly lock the identifier
+        locked, lock_seconds = await record_failed_verify(identifier)
+        if locked:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed attempts. Locked for {lock_seconds} seconds.",
+                headers={"Retry-After": str(lock_seconds)}
+            )
+        # Not yet locked, return the verification failure message
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=message
         )
-    
+
+    # On successful verification: clear any recorded failed attempts
+    await clear_verify_attempts(identifier)
+
     # Check if user exists
     query = db.query(User)
     if request.email:
         user = query.filter(User.email == request.email).first()
     else:
         user = query.filter(User.phone == request.phone).first()
-    
+
     if user:
-        # User exists - can proceed to login
-        # Generate tokens immediately
+        # User exists - proceed to login
         access_token = create_access_token(data={"sub": str(user.id)})
         refresh_token_str = create_refresh_token(data={"sub": str(user.id)})
-        
+
         # Store refresh token
         refresh_token = RefreshToken(
             user_id=user.id,
@@ -131,7 +176,7 @@ async def verify_otp(
         )
         db.add(refresh_token)
         db.commit()
-        
+
         # Log successful login
         login_history = LoginHistory(
             user_id=user.id,
@@ -142,7 +187,7 @@ async def verify_otp(
         )
         db.add(login_history)
         db.commit()
-        
+
         return VerifyOTPResponse(
             success=True,
             message="Login successful",
@@ -153,7 +198,7 @@ async def verify_otp(
     else:
         # New user - needs to signup
         temp_token = generate_temp_token()
-        
+
         return VerifyOTPResponse(
             success=True,
             message="Please complete signup",
