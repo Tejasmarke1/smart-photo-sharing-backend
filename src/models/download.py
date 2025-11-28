@@ -6,7 +6,7 @@ import uuid
 
 from src.db.base import Base
 from .base import TimestampMixin
-from db.base import Base
+
 
 
 class Download(Base, TimestampMixin):

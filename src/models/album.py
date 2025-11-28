@@ -7,7 +7,7 @@ import secrets
 
 from src.db.base import Base
 from .base import TimestampMixin, SoftDeleteMixin
-from db.base import Base
+
 
 
 class Album(Base, TimestampMixin, SoftDeleteMixin):
