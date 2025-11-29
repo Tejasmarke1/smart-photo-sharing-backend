@@ -53,3 +53,11 @@ class AuditAction(str, enum.Enum):
     logout = "logout"
     download = "download"
     share = "share"
+    
+    
+class FaceQuality(str, enum.Enum):
+    """Face detection quality."""
+    high = 'high'
+    medium = 'medium'
+    low = 'low'
+    unknown = 'unknown'
