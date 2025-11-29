@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_DB: str = "1"
     CELERY_RESULT_DB: str = "2"
     
+    # Frontend URL
+    FRONTEND_URL: str = "http://localhost:3000"
+    
     @computed_field
     @property
     def REDIS_URL(self) -> str:

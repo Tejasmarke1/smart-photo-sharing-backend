@@ -3,6 +3,7 @@ from sqlalchemy import Column, String, Float, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime
 import uuid
 
 # FIXED: import Base from db.base (not src.db.base)
@@ -33,6 +34,8 @@ class Face(Base, TimestampMixin):
     # Quality scores
     blur_score = Column(Float, nullable=True)
     brightness_score = Column(Float, nullable=True)
+    
+    deleted_at = Column(DateTime, nullable=True)
     
     # Additional metadata
     extra_data = Column(String, nullable=True)  # JSONB
