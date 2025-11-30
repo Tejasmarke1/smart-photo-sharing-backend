@@ -60,4 +60,4 @@ class FaceQuality(str, enum.Enum):
     high = 'high'
     medium = 'medium'
     low = 'low'
-    unknown = 'unknown'
+    unknown = 'unknown' 
