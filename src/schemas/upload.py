@@ -216,3 +216,104 @@ class UploadQuotaResponse(BaseModel):
     remaining_storage_bytes: Optional[int] = None
     can_upload: bool
     reason: Optional[str] = Field(None, description="Reason if can_upload is False")
+    
+
+class UploadMetadataResponse(BaseModel):
+    """Response for upload metadata."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    photo_id: UUID
+    filename: str
+    filesize: int
+    content_type: str
+    status: str
+    s3_key: str
+    bytes_uploaded: int = 0
+    upload_percentage: float = 0.0
+    created_at: datetime
+    updated_at: datetime
+    processing_error: Optional[str] = None
+
+
+class RecentUploadsResponse(BaseModel):
+    """Response for paginated upload list."""
+    items: List[Any]  # List of Photo models
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+class FileMetadataUpdate(BaseModel):
+    """Request to update file metadata."""
+    title: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    tags: Optional[List[str]] = Field(None, max_items=50)
+    is_private: Optional[bool] = None
+    exif_overrides: Optional[dict[str, Any]] = Field(None, description="EXIF data to override")
+
+
+class FileCopyRequest(BaseModel):
+    """Request to copy/move file."""
+    destination_album_id: UUID
+    move: bool = Field(False, description="If True, move instead of copy")
+
+
+class DeriveAssetRequest(BaseModel):
+    """Request to derive asset (thumbnail, WebP, etc.)."""
+    asset_type: str = Field(..., description="Type: thumbnail, webp, resize")
+    size: Optional[str] = Field(None, description="For thumbnail: small, medium, large")
+    width: Optional[int] = Field(None, ge=1, le=10000)
+    height: Optional[int] = Field(None, ge=1, le=10000)
+    quality: Optional[int] = Field(85, ge=1, le=100)
+    format: Optional[str] = Field(None, description="Output format: jpeg, png, webp")
+    
+    @property
+    def validate_asset_type(self):
+        allowed = ['thumbnail', 'webp', 'resize', 'watermark']
+        if self.asset_type not in allowed:
+            raise ValueError(f'asset_type must be one of: {", ".join(allowed)}')
+        return self.asset_type
+
+
+class DeriveAssetResponse(BaseModel):
+    """Response for asset derivation request."""
+    job_id: str
+    photo_id: UUID
+    asset_type: str
+    status: str = Field(..., description="Status: queued, processing, completed, failed")
+    message: str
+    estimated_completion: Optional[datetime] = None
+
+
+class MultipartPartsListResponse(BaseModel):
+    """Response listing uploaded multipart parts."""
+    upload_id: str
+    parts: List[dict[str, Any]] = Field(..., description="List of uploaded parts with PartNumber, Size, ETag")
+    total_parts: int
+
+
+class FlaggedFilesResponse(BaseModel):
+    """Response for flagged files list."""
+    items: List[Any]  # List of Photo models
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+class BulkDeleteRequest(BaseModel):
+    """Request for bulk file deletion."""
+    photo_ids: List[UUID] = Field(..., min_items=1, max_items=1000)
+    hard_delete: bool = Field(False, description="If True, permanently delete from S3")
+
+
+class AlbumHealthResponse(BaseModel):
+    """Response for album health check."""
+    album_id: UUID
+    health_score: float = Field(..., ge=0, le=100, description="Health score 0-100")
+    total_photos: int
+    processing_photos: int
+    failed_photos: int
+    pending_uploads: int
+    is_healthy: bool = Field(..., description="True if health_score >= 95")

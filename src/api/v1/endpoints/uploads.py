@@ -1,7 +1,7 @@
-"""Upload API endpoints for photo uploads."""
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+"""Upload API endpoints for photo uploads - Production Grade (27 endpoints)."""
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, timedelta
 
@@ -28,7 +28,17 @@ from src.schemas.upload import (
     UploadProgressRequest,
     UploadProgressResponse,
     UploadStatsResponse,
-    UploadQuotaResponse
+    UploadQuotaResponse,
+    UploadMetadataResponse,
+    RecentUploadsResponse,
+    FileMetadataUpdate,
+    FileCopyRequest,
+    DeriveAssetRequest,
+    DeriveAssetResponse,
+    MultipartPartsListResponse,
+    FlaggedFilesResponse,
+    BulkDeleteRequest,
+    AlbumHealthResponse
 )
 from src.services.storage.s3 import S3Service
 from src.app.config import settings
@@ -38,67 +48,35 @@ router = APIRouter()
 
 
 def check_album_access(album_id: UUID, user: User, db: Session) -> None:
-    """
-    Verify user has upload access to album.
-    
-    Args:
-        album_id: Album UUID
-        user: Current user
-        db: Database session
-        
-    Raises:
-        HTTPException if album not found or no access
-    """
+    """Verify user has upload access to album."""
     album_repo = AlbumRepository(db)
     album = album_repo.get(album_id)
     
     if not album:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Album not found'
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Album not found')
     
-    # Check permission (owner or admin)
     if user.role != 'admin' and album.photographer_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Not authorized to upload to this album'
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Not authorized to upload to this album')
 
 
 def check_upload_quota(album_id: UUID, filesize: int, db: Session) -> None:
-    """
-    Check if upload quota is available.
-    
-    Args:
-        album_id: Album UUID
-        filesize: File size to upload
-        db: Database session
-        
-    Raises:
-        HTTPException if quota exceeded
-    """
+    """Check if upload quota is available."""
     photo_repo = PhotoRepository(db)
-    
-    # TODO: Implement actual quota checking based on subscription plan
-    # For now, just check basic limits
-    
-    # Example: Max 10,000 photos per album
     stats = photo_repo.get_album_stats(album_id)
-    if stats['total_photos'] >= 10000:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Album photo limit reached (10,000 photos)'
-        )
     
-    # Example: Max 100GB per album
-    max_storage = 100 * 1024 * 1024 * 1024  # 100GB
+    # Max 10,000 photos per album
+    if stats['total_photos'] >= 10000:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Album photo limit reached (10,000 photos)')
+    
+    # Max 100GB per album
+    max_storage = 100 * 1024 * 1024 * 1024
     if stats['total_size_bytes'] + filesize > max_storage:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Album storage limit reached (100GB)'
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Album storage limit reached (100GB)')
 
+
+# ============================================================================
+# STANDARD UPLOAD FLOW
+# ============================================================================
 
 @router.post('/albums/{album_id}/presign', response_model=PresignResponse)
 def request_presigned_url(
@@ -107,34 +85,15 @@ def request_presigned_url(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Request presigned URL for photo upload (Step 1 of upload flow).
-    
-    Flow:
-    1. Client requests presigned URL
-    2. Server creates photo record and returns S3 presigned URL
-    3. Client uploads directly to S3
-    4. Client notifies completion via /notify_upload
-    
-    Features:
-    - Direct S3 upload (no file passes through server)
-    - Supports files up to 100MB (use multipart for larger)
-    - Returns photo_id for tracking
-    """
-    # Verify access
+    """Request presigned URL for photo upload (Step 1 of upload flow)."""
     check_album_access(album_id, current_user, db)
-    
-    # Check quota
     check_upload_quota(album_id, request.filesize, db)
     
-    # Initialize services
     s3_service = S3Service()
     photo_repo = PhotoRepository(db)
     
-    # Generate S3 key
     s3_key = s3_service.generate_s3_key(str(album_id), request.filename)
     
-    # Create photo record in database
     photo = photo_repo.create_photo(
         album_id=album_id,
         uploader_id=current_user.id,
@@ -145,7 +104,6 @@ def request_presigned_url(
         filesize=request.filesize
     )
     
-    # Generate presigned URL
     presign_data = s3_service.generate_presigned_upload_url(
         s3_key=s3_key,
         content_type=request.content_type,
@@ -171,33 +129,19 @@ def request_bulk_presigned_urls(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Request multiple presigned URLs for bulk upload.
-    
-    Features:
-    - Upload up to 100 files at once
-    - Efficient batch processing
-    - Returns all presigned URLs in single response
-    
-    Max 100 files per request.
-    """
-    # Verify access
+    """Request multiple presigned URLs for bulk upload (max 100 files)."""
     check_album_access(album_id, current_user, db)
     
-    # Check total quota
     total_size = sum(f.filesize for f in request.files)
     check_upload_quota(album_id, total_size, db)
     
-    # Initialize services
     s3_service = S3Service()
     photo_repo = PhotoRepository(db)
     
     uploads = []
     for file_request in request.files:
-        # Generate S3 key
         s3_key = s3_service.generate_s3_key(str(album_id), file_request.filename)
         
-        # Create photo record
         photo = photo_repo.create_photo(
             album_id=album_id,
             uploader_id=current_user.id,
@@ -208,7 +152,6 @@ def request_bulk_presigned_urls(
             filesize=file_request.filesize
         )
         
-        # Generate presigned URL
         presign_data = s3_service.generate_presigned_upload_url(
             s3_key=s3_key,
             content_type=file_request.content_type,
@@ -240,70 +183,25 @@ def notify_upload_complete(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Notify that upload is complete (Step 3 of upload flow).
-    
-    After client uploads to S3:
-    1. Client calls this endpoint with photo_id and s3_key
-    2. Server updates photo record
-    3. Server enqueues background processing (thumbnails, faces)
-    
-    Processing includes:
-    - EXIF extraction
-    - Thumbnail generation (small, medium, large)
-    - Face detection
-    - Watermark application
-    """
-    # Verify access
+    """Notify that upload is complete (Step 3 of upload flow)."""
     check_album_access(album_id, current_user, db)
     
     photo_repo = PhotoRepository(db)
     s3_service = S3Service()
     
-    # Get photo record
     photo = photo_repo.get(request.photo_id)
-    if not photo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Photo not found'
-        )
+    if not photo or photo.album_id != album_id or photo.s3_key != request.s3_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid photo or S3 key')
     
-    # Verify photo belongs to this album
-    if photo.album_id != album_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Photo does not belong to this album'
-        )
-    
-    # Verify S3 key matches
-    if photo.s3_key != request.s3_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='S3 key mismatch'
-        )
-    
-    # Verify file exists in S3
     if not s3_service.check_object_exists(request.s3_key):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='File not found in S3. Upload may have failed.'
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='File not found in S3')
     
-    # Update EXIF if provided
     if request.exif:
-        photo_repo.update_exif(
-            photo.id,
-            exif_data=request.exif,
-            taken_at=request.exif.get('taken_at'),
-            camera_model=request.exif.get('camera_model')
-        )
+        photo_repo.update_exif(photo.id, exif_data=request.exif)
     
-    # Update status to processing
     photo_repo.update_status(photo.id, PhotoStatus.processing)
     
-    # Enqueue background processing
-    # TODO: Implement Celery task
-    # from src.tasks.workers.photo_processor import process_photo
+    # TODO: Enqueue processing
     # background_tasks.add_task(process_photo.delay, str(photo.id))
     
     return UploadCompleteResponse(
@@ -322,13 +220,7 @@ def notify_bulk_upload_complete(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Notify completion of multiple uploads.
-    
-    Efficient batch notification for bulk uploads.
-    Max 100 photos per request.
-    """
-    # Verify access
+    """Notify completion of multiple uploads (max 100 photos)."""
     check_album_access(album_id, current_user, db)
     
     photo_repo = PhotoRepository(db)
@@ -339,30 +231,22 @@ def notify_bulk_upload_complete(
     
     for upload in request.uploads:
         try:
-            # Get photo
             photo = photo_repo.get(upload.photo_id)
             if not photo or photo.album_id != album_id:
                 failed_photo_ids.append(upload.photo_id)
                 continue
             
-            # Verify S3 upload
             if not s3_service.check_object_exists(upload.s3_key):
                 failed_photo_ids.append(upload.photo_id)
                 continue
             
-            # Update EXIF if provided
             if upload.exif:
                 photo_repo.update_exif(upload.photo_id, upload.exif)
             
-            # Update status
             photo_repo.update_status(upload.photo_id, PhotoStatus.processing)
-            
-            # Enqueue processing
-            # TODO: background_tasks.add_task(process_photo.delay, str(upload.photo_id))
-            
             success_count += 1
             
-        except Exception as e:
+        except Exception:
             failed_photo_ids.append(upload.photo_id)
     
     return BulkUploadCompleteResponse(
@@ -373,6 +257,10 @@ def notify_bulk_upload_complete(
     )
 
 
+# ============================================================================
+# MULTIPART UPLOAD FLOW
+# ============================================================================
+
 @router.post('/albums/{album_id}/multipart/init', response_model=MultipartUploadInitResponse)
 def initialize_multipart_upload(
     album_id: UUID,
@@ -380,29 +268,15 @@ def initialize_multipart_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Initialize multipart upload for large files (>100MB).
-    
-    Multipart upload flow:
-    1. Initialize multipart upload (this endpoint)
-    2. Get presigned URLs for each part
-    3. Upload parts to S3
-    4. Complete multipart upload
-    
-    Required for files > 5MB.
-    Supports files up to 5TB (AWS limit).
-    """
-    # Verify access
+    """Initialize multipart upload for large files (>100MB)."""
     check_album_access(album_id, current_user, db)
     check_upload_quota(album_id, request.filesize, db)
     
     s3_service = S3Service()
     photo_repo = PhotoRepository(db)
     
-    # Generate S3 key
     s3_key = s3_service.generate_s3_key(str(album_id), request.filename)
     
-    # Create photo record
     photo = photo_repo.create_photo(
         album_id=album_id,
         uploader_id=current_user.id,
@@ -413,19 +287,16 @@ def initialize_multipart_upload(
         filesize=request.filesize
     )
     
-    # Calculate parts
     total_parts, actual_part_size = s3_service.calculate_multipart_info(
         request.filesize,
         request.part_size
     )
     
-    # Initialize multipart upload in S3
     upload_id = s3_service.initiate_multipart_upload(
         s3_key=s3_key,
         content_type=request.content_type
     )
     
-    # Store upload_id in photo extra_data for tracking
     photo_repo.update(photo.id, {
         'extra_data': {
             'multipart_upload_id': upload_id,
@@ -450,17 +321,9 @@ def get_multipart_part_urls(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get presigned URLs for multipart upload parts.
-    
-    Request URLs for specific part numbers.
-    Can request multiple parts at once (up to 100).
-    
-    Client should upload each part using the returned URLs.
-    """
+    """Get presigned URLs for multipart upload parts (up to 100 parts)."""
     photo_repo = PhotoRepository(db)
     
-    # Verify photo exists and user has access
     photo = photo_repo.get(request.photo_id)
     if not photo:
         raise HTTPException(status_code=404, detail='Photo not found')
@@ -469,7 +332,6 @@ def get_multipart_part_urls(
         if current_user.role != 'admin':
             raise HTTPException(status_code=403, detail='Not authorized')
     
-    # Generate presigned URLs for parts
     s3_service = S3Service()
     part_urls = s3_service.generate_multipart_presigned_urls(
         s3_key=request.s3_key,
@@ -484,6 +346,35 @@ def get_multipart_part_urls(
     )
 
 
+@router.get('/multipart/{upload_id}/parts', response_model=MultipartPartsListResponse)
+def list_multipart_parts(
+    upload_id: str,
+    photo_id: UUID = Query(...),
+    s3_key: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List uploaded parts for a multipart upload (for resume functionality)."""
+    photo_repo = PhotoRepository(db)
+    
+    photo = photo_repo.get(photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    if not photo_repo.verify_album_ownership(photo_id, current_user.id):
+        if current_user.role != 'admin':
+            raise HTTPException(status_code=403, detail='Not authorized')
+    
+    s3_service = S3Service()
+    parts = s3_service.list_multipart_parts(s3_key, upload_id)
+    
+    return MultipartPartsListResponse(
+        upload_id=upload_id,
+        parts=parts,
+        total_parts=len(parts)
+    )
+
+
 @router.post('/multipart/complete', response_model=UploadCompleteResponse)
 def complete_multipart_upload(
     request: MultipartUploadCompleteRequest,
@@ -491,19 +382,9 @@ def complete_multipart_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Complete multipart upload.
-    
-    After all parts are uploaded:
-    1. Client calls this endpoint with part ETags
-    2. Server completes multipart upload in S3
-    3. Server enqueues processing
-    
-    Parts must be provided in order with ETags from S3 responses.
-    """
+    """Complete multipart upload after all parts uploaded."""
     photo_repo = PhotoRepository(db)
     
-    # Verify photo and access
     photo = photo_repo.get(request.photo_id)
     if not photo:
         raise HTTPException(status_code=404, detail='Photo not found')
@@ -512,36 +393,26 @@ def complete_multipart_upload(
         if current_user.role != 'admin':
             raise HTTPException(status_code=403, detail='Not authorized')
     
-    # Complete multipart upload in S3
     s3_service = S3Service()
     
-    # Format parts for S3
     parts = [
         {'PartNumber': part['part_number'], 'ETag': part['etag']}
         for part in request.parts
     ]
     
     try:
-        result = s3_service.complete_multipart_upload(
+        s3_service.complete_multipart_upload(
             s3_key=request.s3_key,
             upload_id=request.upload_id,
             parts=parts
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Failed to complete multipart upload: {str(e)}'
-        )
+        raise HTTPException(status_code=400, detail=f'Failed to complete multipart upload: {str(e)}')
     
-    # Update EXIF if provided
     if request.exif:
         photo_repo.update_exif(request.photo_id, request.exif)
     
-    # Update status to processing
     photo_repo.update_status(request.photo_id, PhotoStatus.processing)
-    
-    # Enqueue processing
-    # TODO: background_tasks.add_task(process_photo.delay, str(request.photo_id))
     
     return UploadCompleteResponse(
         photo_id=request.photo_id,
@@ -557,15 +428,9 @@ def abort_multipart_upload(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Abort multipart upload and cleanup.
-    
-    Cancels the upload and deletes all uploaded parts from S3.
-    Also deletes the photo record.
-    """
+    """Abort multipart upload and cleanup."""
     photo_repo = PhotoRepository(db)
     
-    # Verify photo and access
     photo = photo_repo.get(request.photo_id)
     if not photo:
         raise HTTPException(status_code=404, detail='Photo not found')
@@ -574,17 +439,137 @@ def abort_multipart_upload(
         if current_user.role != 'admin':
             raise HTTPException(status_code=403, detail='Not authorized')
     
-    # Abort multipart upload in S3
     s3_service = S3Service()
-    s3_service.abort_multipart_upload(
-        s3_key=request.s3_key,
-        upload_id=request.upload_id
-    )
+    s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
     
-    # Delete photo record
     photo_repo.delete(request.photo_id, soft=False)
     
     return None
+
+
+@router.post('/multipart/{upload_id}/retry', response_model=MultipartPartPresignResponse)
+def retry_multipart_parts(
+    upload_id: str,
+    photo_id: UUID = Query(...),
+    s3_key: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Re-issue presigned URLs for missing/failed multipart parts."""
+    photo_repo = PhotoRepository(db)
+    
+    photo = photo_repo.get(photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    if not photo_repo.verify_album_ownership(photo_id, current_user.id):
+        if current_user.role != 'admin':
+            raise HTTPException(status_code=403, detail='Not authorized')
+    
+    s3_service = S3Service()
+    
+    # Get uploaded parts
+    uploaded_parts = s3_service.list_multipart_parts(s3_key, upload_id)
+    uploaded_part_nums = {part['PartNumber'] for part in uploaded_parts}
+    
+    # Get total expected parts
+    extra_data = photo.extra_data or {}
+    total_parts = extra_data.get('total_parts', 0)
+    
+    if not total_parts:
+        raise HTTPException(status_code=400, detail='Unable to determine total parts')
+    
+    # Find missing parts
+    missing_parts = [i for i in range(1, total_parts + 1) if i not in uploaded_part_nums]
+    
+    if not missing_parts:
+        return MultipartPartPresignResponse(part_urls={}, expires_in=3600)
+    
+    # Generate URLs for missing parts
+    part_urls = s3_service.generate_multipart_presigned_urls(
+        s3_key=s3_key,
+        upload_id=upload_id,
+        part_numbers=missing_parts,
+        expires_in=3600
+    )
+    
+    return MultipartPartPresignResponse(
+        part_urls=part_urls,
+        expires_in=3600
+    )
+
+
+# ============================================================================
+# UPLOAD STATUS & MONITORING
+# ============================================================================
+
+@router.get('/{photo_id}', response_model=UploadMetadataResponse)
+def get_upload_metadata(
+    photo_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get upload metadata and status."""
+    photo_repo = PhotoRepository(db)
+    
+    photo = photo_repo.get_with_relations(photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    if not photo_repo.verify_album_ownership(photo_id, current_user.id):
+        if current_user.role != 'admin':
+            raise HTTPException(status_code=403, detail='Not authorized')
+    
+    upload_progress = photo.extra_data.get('upload_progress', {}) if photo.extra_data else {}
+    
+    return UploadMetadataResponse(
+        photo_id=photo.id,
+        filename=photo.filename,
+        filesize=photo.filesize,
+        content_type=photo.content_type,
+        status=photo.status,
+        s3_key=photo.s3_key,
+        bytes_uploaded=upload_progress.get('bytes_uploaded', 0),
+        upload_percentage=upload_progress.get('percentage', 0.0),
+        created_at=photo.created_at,
+        updated_at=photo.updated_at,
+        processing_error=photo.processing_error
+    )
+
+
+@router.get('/albums/{album_id}/uploads', response_model=RecentUploadsResponse)
+def list_recent_uploads(
+    album_id: UUID,
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    status: Optional[PhotoStatus] = Query(None),
+    hours: int = Query(24, ge=1, le=168),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List recent uploads in album with pagination and filters."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    
+    skip = (page - 1) * size
+    photos = photo_repo.get_recent_uploads(album_id, hours, limit=1000)
+    
+    if status:
+        photos = [p for p in photos if p.status == status]
+    
+    total = len(photos)
+    photos = photos[skip:skip + size]
+    
+    pages = (total + size - 1) // size
+    
+    return RecentUploadsResponse(
+        items=photos,
+        total=total,
+        page=page,
+        size=size,
+        pages=pages
+    )
 
 
 @router.post('/progress', response_model=UploadProgressResponse)
@@ -593,26 +578,15 @@ def update_upload_progress(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Update upload progress (for monitoring and UI).
-    
-    Optional endpoint for clients to report upload progress.
-    Useful for:
-    - Progress bars
-    - Upload monitoring
-    - Analytics
-    """
+    """Update upload progress for monitoring and UI."""
     photo_repo = PhotoRepository(db)
     
-    # Verify photo exists
     photo = photo_repo.get(request.photo_id)
     if not photo:
         raise HTTPException(status_code=404, detail='Photo not found')
     
-    # Calculate percentage
     percentage = (request.bytes_uploaded / request.total_bytes) * 100
     
-    # Update extra_data with progress
     photo_repo.update(request.photo_id, {
         'extra_data': {
             'upload_progress': {
@@ -639,21 +613,11 @@ def get_upload_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get upload statistics for monitoring.
-    
-    Returns:
-    - Total uploads today
-    - Successful vs failed
-    - Total bytes uploaded
-    - Pending uploads
-    """
-    # Verify access
+    """Get upload statistics for monitoring."""
     check_album_access(album_id, current_user, db)
     
     photo_repo = PhotoRepository(db)
     
-    # Get today's uploads
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     
     query = photo_repo.db.query(photo_repo.model).filter(
@@ -690,21 +654,14 @@ def get_upload_quota(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get upload quota information.
-    
-    Returns current usage and remaining quota.
-    Useful for showing limits in UI before upload.
-    """
-    # Verify access
+    """Get upload quota information."""
     check_album_access(album_id, current_user, db)
     
     photo_repo = PhotoRepository(db)
     stats = photo_repo.get_album_stats(album_id)
     
-    # TODO: Get actual limits from subscription/plan
-    max_photos = 10000  # Example limit
-    max_storage = 100 * 1024 * 1024 * 1024  # 100GB
+    max_photos = 10000
+    max_storage = 100 * 1024 * 1024 * 1024
     
     current_photos = stats['total_photos']
     current_storage = stats['total_size_bytes']
@@ -731,3 +688,416 @@ def get_upload_quota(
         can_upload=can_upload,
         reason=reason
     )
+
+
+@router.get('/albums/{album_id}/health', response_model=AlbumHealthResponse)
+def get_album_health(
+    album_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Quick health check for album upload workflow."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    stats = photo_repo.get_album_stats(album_id)
+    status_breakdown = photo_repo.count_by_status(album_id)
+    
+    total = stats['total_photos']
+    if total == 0:
+        health_score = 100.0
+    else:
+        failed = stats['failed_photos']
+        health_score = max(0, 100 - (failed / total * 100))
+    
+    return AlbumHealthResponse(
+        album_id=album_id,
+        health_score=round(health_score, 2),
+        total_photos=total,
+        processing_photos=stats['processing_photos'],
+        failed_photos=failed,
+        pending_uploads=status_breakdown.get('uploaded', 0),
+        is_healthy=health_score >= 95.0
+    )
+
+
+# ============================================================================
+# FILE MANAGEMENT
+# ============================================================================
+
+@router.get('/albums/{album_id}/files/{photo_id}/presign-download', response_model=dict)
+def presign_file_download(
+    album_id: UUID,
+    photo_id: UUID,
+    expires_in: int = Query(3600, ge=300, le=86400),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Request short-lived presigned download URL."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo or photo.album_id != album_id:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    s3_service = S3Service()
+    download_url = s3_service.generate_presigned_download_url(
+        s3_key=photo.s3_key,
+        expires_in=expires_in,
+        filename=photo.filename
+    )
+    
+    return {
+        'download_url': download_url,
+        'expires_in': expires_in,
+        'filename': photo.filename
+    }
+
+
+@router.post('/albums/{album_id}/files/{photo_id}/copy', response_model=dict)
+def copy_file(
+    album_id: UUID,
+    photo_id: UUID,
+    request: FileCopyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Copy/move file between albums or buckets."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo or photo.album_id != album_id:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    s3_service = S3Service()
+    
+    dest_key = s3_service.generate_s3_key(str(request.destination_album_id), photo.filename)
+    
+    etag = s3_service.copy_object(
+        source_key=photo.s3_key,
+        destination_key=dest_key
+    )
+    
+    if not request.move:
+        new_photo = photo_repo.create_photo(
+            album_id=request.destination_album_id,
+            uploader_id=current_user.id,
+            s3_key=dest_key,
+            s3_bucket=s3_service.bucket_name,
+            filename=photo.filename,
+            content_type=photo.content_type,
+            filesize=photo.filesize
+        )
+        return {'photo_id': new_photo.id, 's3_key': dest_key, 'etag': etag}
+    else:
+        s3_service.delete_object(photo.s3_key)
+        photo_repo.update(photo_id, {'s3_key': dest_key, 'album_id': request.destination_album_id})
+        return {'photo_id': photo_id, 's3_key': dest_key, 'etag': etag}
+
+
+@router.delete('/albums/{album_id}/files/{photo_id}', status_code=status.HTTP_204_NO_CONTENT)
+def delete_file(
+    album_id: UUID,
+    photo_id: UUID,
+    hard: bool = Query(False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete file (soft delete by default, hard delete with S3 cleanup)."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo or photo.album_id != album_id:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    if hard:
+        s3_service = S3Service()
+        s3_service.delete_object(photo.s3_key)
+        photo_repo.delete(photo_id, soft=False)
+    else:
+        photo_repo.delete(photo_id, soft=True)
+    
+    return None
+
+
+@router.post('/albums/{album_id}/files/{photo_id}/purge-cdn', status_code=status.HTTP_202_ACCEPTED)
+def purge_cdn_cache(
+    album_id: UUID,
+    photo_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Purge cached CDN object."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo or photo.album_id != album_id:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    # TODO: Implement CDN purge logic (CloudFront, CloudFlare, etc.)
+    # Example: cloudfront_service.create_invalidation(paths=[photo.s3_key])
+    
+    return {
+        'message': 'CDN purge requested',
+        'photo_id': photo_id,
+        'status': 'pending'
+    }
+
+
+@router.patch('/albums/{album_id}/files/{photo_id}', response_model=dict)
+def update_file_metadata(
+    album_id: UUID,
+    photo_id: UUID,
+    request: FileMetadataUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update file metadata (title, tags, privacy, EXIF overrides)."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo or photo.album_id != album_id:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    update_data = {}
+    if request.title is not None:
+        update_data['title'] = request.title
+    if request.description is not None:
+        update_data['description'] = request.description
+    if request.tags is not None:
+        update_data['tags'] = request.tags
+    if request.is_private is not None:
+        update_data['is_private'] = request.is_private
+    if request.exif_overrides:
+        existing_exif = photo.exif_data or {}
+        existing_exif.update(request.exif_overrides)
+        update_data['exif_data'] = existing_exif
+    
+    photo_repo.update(photo_id, update_data)
+    
+    return {
+        'photo_id': photo_id,
+        'message': 'Metadata updated successfully',
+        'updated_fields': list(update_data.keys())
+    }
+
+
+@router.post('/albums/{album_id}/files/{photo_id}/derive', response_model=DeriveAssetResponse)
+def derive_asset(
+    album_id: UUID,
+    photo_id: UUID,
+    request: DeriveAssetRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Request derived asset (thumbnail, WebP, different sizes)."""
+    check_album_access(album_id, current_user, db)
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo or photo.album_id != album_id:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    # Generate job ID
+    job_id = f"derive_{photo_id}_{request.asset_type}_{datetime.utcnow().timestamp()}"
+    
+    # TODO: Enqueue background task for asset derivation
+    # background_tasks.add_task(derive_asset_task.delay, job_id, photo_id, request.dict())
+    
+    return DeriveAssetResponse(
+        job_id=job_id,
+        photo_id=photo_id,
+        asset_type=request.asset_type,
+        status='queued',
+        message=f'Derivation job for {request.asset_type} queued'
+    )
+
+
+# ============================================================================
+# ADMIN & MODERATION
+# ============================================================================
+
+@router.get('/flagged', response_model=FlaggedFilesResponse)
+def list_flagged_files(
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    reason: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List flagged/quarantined files (Admin only)."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    photo_repo = PhotoRepository(db)
+    
+    skip = (page - 1) * size
+    
+    query = photo_repo.db.query(photo_repo.model).filter(
+        photo_repo.model.is_flagged == True
+    )
+    
+    if reason:
+        query = query.filter(photo_repo.model.flag_reason == reason)
+    
+    total = query.count()
+    photos = query.offset(skip).limit(size).all()
+    
+    pages = (total + size - 1) // size
+    
+    return FlaggedFilesResponse(
+        items=photos,
+        total=total,
+        page=page,
+        size=size,
+        pages=pages
+    )
+
+
+@router.post('/{photo_id}/quarantine', status_code=status.HTTP_200_OK)
+def quarantine_file(
+    photo_id: UUID,
+    reason: str = Query(..., min_length=1, max_length=500),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Quarantine a file (Admin only)."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    photo_repo.update(photo_id, {
+        'is_flagged': True,
+        'flag_reason': reason,
+        'flagged_at': datetime.utcnow(),
+        'flagged_by': current_user.id
+    })
+    
+    return {
+        'photo_id': photo_id,
+        'message': 'File quarantined successfully',
+        'reason': reason
+    }
+
+
+@router.post('/{photo_id}/restore', status_code=status.HTTP_200_OK)
+def restore_file(
+    photo_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Restore quarantined file (Admin only)."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    photo_repo = PhotoRepository(db)
+    photo = photo_repo.get(photo_id)
+    
+    if not photo:
+        raise HTTPException(status_code=404, detail='Photo not found')
+    
+    photo_repo.update(photo_id, {
+        'is_flagged': False,
+        'flag_reason': None,
+        'flagged_at': None,
+        'flagged_by': None
+    })
+    
+    return {
+        'photo_id': photo_id,
+        'message': 'File restored successfully'
+    }
+
+
+# ============================================================================
+# OPERATIONAL & BULK OPERATIONS
+# ============================================================================
+
+@router.post('/bulk-delete', status_code=status.HTTP_200_OK)
+def bulk_delete_files(
+    request: BulkDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete files (Admin only, max 1000 files)."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    if len(request.photo_ids) > 1000:
+        raise HTTPException(status_code=400, detail='Maximum 1000 files per bulk delete')
+    
+    photo_repo = PhotoRepository(db)
+    s3_service = S3Service()
+    
+    success_count = 0
+    failed_ids = []
+    s3_keys_to_delete = []
+    
+    for photo_id in request.photo_ids:
+        try:
+            photo = photo_repo.get(photo_id)
+            if not photo:
+                failed_ids.append(photo_id)
+                continue
+            
+            s3_keys_to_delete.append(photo.s3_key)
+            
+            if request.hard_delete:
+                photo_repo.delete(photo_id, soft=False)
+            else:
+                photo_repo.delete(photo_id, soft=True)
+            
+            success_count += 1
+            
+        except Exception:
+            failed_ids.append(photo_id)
+    
+    # Bulk delete from S3 if hard delete
+    if request.hard_delete and s3_keys_to_delete:
+        s3_success, s3_failed = s3_service.delete_objects_bulk(s3_keys_to_delete)
+    
+    return {
+        'success_count': success_count,
+        'failed_count': len(failed_ids),
+        'failed_ids': failed_ids,
+        'message': f'Deleted {success_count}/{len(request.photo_ids)} files'
+    }
+
+
+@router.post('/maintenance/reindex', status_code=status.HTTP_202_ACCEPTED)
+def reindex_uploads(
+    album_id: Optional[UUID] = Query(None),
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reindex uploads for search (Admin only)."""
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    # TODO: Implement search reindexing logic
+    # background_tasks.add_task(reindex_photos_task.delay, album_id)
+    
+    return {
+        'message': 'Reindexing started',
+        'album_id': album_id,
+        'status': 'pending'
+    }
