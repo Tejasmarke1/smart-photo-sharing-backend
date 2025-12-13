@@ -28,6 +28,8 @@ build/
 *.swo
 .DS_Store
 
+data/
+
 # Testing
 .coverage
 htmlcov/
