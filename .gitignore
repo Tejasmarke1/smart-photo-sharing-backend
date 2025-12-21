@@ -28,7 +28,19 @@ build/
 *.swo
 .DS_Store
 
-.data/
+# ML / AI
+*.onnx
+*.pth
+*.h5
+*.ckpt
+*.joblib
+*.pkl
+*.faiss
+*.index
+
+*.jpg
+*.jpeg
+data/
 
 test_results/
 
