@@ -20,7 +20,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture(scope="function")
 def db():
-    \"\"\"Create a fresh database for each test.\"\"\"
+    """Create a fresh database for each test."""
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     try:
@@ -32,7 +32,7 @@ def db():
 
 @pytest.fixture(scope="function")
 def client(db):
-    \"\"\"Create a test client with database dependency override.\"\"\"
+    """Create a test client with database dependency override."""
     def override_get_db():
         try:
             yield db

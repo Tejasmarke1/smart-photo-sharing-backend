@@ -28,11 +28,13 @@ build/
 *.swo
 .DS_Store
 
-data/
+.data/
+
+test_results/
 
 # Testing
 .coverage
-htmlcov/
+htmlcov/    
 .pytest_cache/
 .mypy_cache/
 

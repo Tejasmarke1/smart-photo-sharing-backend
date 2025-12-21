@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     OTP_SEND_WINDOW_SECS: int = Field(..., env="OTP_SEND_WINDOW_SECS")
     OTP_VERIFY_LOCK_SECS: int = Field(..., env="OTP_VERIFY_LOCK_SECS")
     
+    FACE_DEVICE: str = Field(..., env="FACE_DEVICE")  
 
 
 settings = Settings()
