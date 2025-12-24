@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 
 from src.app.config import settings
 from src.api.v1.router import api_router
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
 
 
 @asynccontextmanager
@@ -46,3 +48,20 @@ app = create_application()
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "environment": settings.ENVIRONMENT}
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc)}
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
+
+app.include_router(api_router, prefix="/api/v1")

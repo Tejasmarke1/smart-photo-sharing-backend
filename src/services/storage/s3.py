@@ -691,3 +691,89 @@ class S3Service:
             
             logger.error(f"Error getting bucket info: {e}")
             raise S3ServiceError(f"Failed to access bucket: {str(e)}")
+
+    def download_file(self, s3_key: str) -> bytes:
+        """
+        Download file from S3 and return raw bytes.
+        
+        Args:
+            s3_key: S3 object key
+            
+        Returns:
+            File content as bytes
+            
+        Raises:
+            S3ServiceError: If download fails
+        """
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=s3_key
+            )
+            file_bytes = response['Body'].read()
+            logger.debug(f"Downloaded {len(file_bytes)} bytes from: {s3_key}")
+            return file_bytes
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'NoSuchKey':
+                raise S3ServiceError(f"Object not found: {s3_key}")
+            logger.error(f"Error downloading file: {e}")
+            raise S3ServiceError(f"Failed to download file: {str(e)}")
+
+    def upload_file(
+        self,
+        file_data: bytes,
+        s3_key: str,
+        content_type: str = 'application/octet-stream',
+        metadata: Optional[Dict[str, str]] = None
+    ) -> bool:
+        """
+        Upload file bytes directly to S3.
+        
+        Args:
+            file_data: File content as bytes
+            s3_key: S3 object key
+            content_type: MIME type
+            metadata: Optional metadata dict
+            
+        Returns:
+            True if successful, False otherwise
+            
+        Raises:
+            S3ServiceError: If upload fails
+        """
+        try:
+            params = {
+                'Bucket': self.bucket_name,
+                'Key': s3_key,
+                'Body': file_data,
+                'ContentType': content_type
+            }
+            
+            if metadata:
+                params['Metadata'] = metadata
+            
+            self.s3_client.put_object(**params)
+            logger.info(f"Uploaded {len(file_data)} bytes to: {s3_key}")
+            return True
+            
+        except ClientError as e:
+            logger.error(f"Error uploading file: {e}")
+            raise S3ServiceError(f"Failed to upload file: {str(e)}")
+
+    def delete_file(self, s3_key: str) -> bool:
+        """
+        Delete a file from S3 (alias for delete_object for consistency).
+        
+        Args:
+            s3_key: S3 object key
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            S3ServiceError: If deletion fails
+        """
+        self.delete_object(s3_key)
+        return True

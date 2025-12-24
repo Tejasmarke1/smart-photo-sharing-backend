@@ -13,6 +13,8 @@ import cv2
 import logging
 import os
 
+from src.services.face.clustering import FaceClusterer
+
 logger = logging.getLogger(__name__)
 
 DeviceType = Literal['cpu', 'gpu', 'auto']
@@ -67,8 +69,8 @@ class DeviceConfig:
                 'batch_size': 32,
                 'det_size': (640, 640),
                 'nlist': 1024,
-                'use_tensorrt': True,
-                'providers': ['CUDAExecutionProvider', 'CPUExecutionProvider']
+                'use_tensorrt': os.getenv("ENABLE_TENSORRT", "false").lower() == "true",
+                'providers': ['TensorrtExecutionProvider','CUDAExecutionProvider','CPUExecutionProvider']
             }
         else:
             return {
@@ -84,6 +86,7 @@ class DeviceConfig:
 # Updated Detector (supports CPU/GPU)
 # =============================================================================
 
+from src.services.face.aligner import FaceAligner
 from src.services.face.detector import DetectedFace
 
 class FlexibleRetinaFaceDetector:
@@ -123,8 +126,8 @@ class FlexibleRetinaFaceDetector:
             
             logger.info(f"✓ RetinaFace initialized on {self.device.upper()}")
             
-        except ImportError:
-            logger.warning("⚠️  RetinaFace not available, using fallback")
+        except (ImportError, TypeError):
+            logger.warning(f"⚠️  RetinaFace not available or incompatible, using fallback")
             # Fallback to InsightFace
             from insightface.app import FaceAnalysis
             
@@ -279,11 +282,17 @@ class FlexibleTensorRTEmbedder:
     
     def _init_tensorrt(self):
         """Initialize TensorRT engine."""
-        import tensorrt as trt
-        import pycuda.driver as cuda
-        import pycuda.autoinit
-        
-        engine_path = os.getenv('TENSORRT_ENGINE_PATH', 'models/arcface_fp16.trt')
+        try:
+            import tensorrt as trt
+            import torch.cuda as cuda
+        except ImportError:
+            raise RuntimeError("TensorRT not available")
+
+        engine_path = os.getenv(
+            'TENSORRT_ENGINE_PATH',
+            '/models/arcface_fp16.trt'
+        )
+ 
         
         self.logger = trt.Logger(trt.Logger.WARNING)
         with open(engine_path, 'rb') as f:
@@ -426,7 +435,7 @@ class FaceResult:
     bbox: Tuple[int, int, int, int]
     confidence: float
     embedding: np.ndarray
-    thumbnail_path: str
+    thumbnail_s3_key: str
     blur_score: float
     brightness_score: float
 
@@ -501,8 +510,11 @@ class FacePipeline:
         if embedder is None:
             embedder = FlexibleTensorRTEmbedder(device=self.device)
         
+        # Only create search engine if not explicitly set to False
         if search_engine is None:
             search_engine = FlexibleFAISSVectorSearch(device=self.device)
+        elif search_engine is False:
+            search_engine = None
         
         if clusterer is None:
             from src.services.face.clustering import FaceClusterer
@@ -560,10 +572,10 @@ class FacePipeline:
             brightness_score = self._assess_brightness(aligned)
             
             # Save thumbnail (optional)
-            thumbnail_path = None
+            thumbnail_s3_key = None
             if save_crops:
-                thumbnail_path = f"faces/{photo_id}/{face_id}.jpg"
-                cv2.imwrite(thumbnail_path, cv2.cvtColor(aligned, cv2.COLOR_RGB2BGR))
+                thumbnail_s3_key = f"faces/{photo_id}/{face_id}.jpg"
+                cv2.imwrite(thumbnail_s3_key, cv2.cvtColor(aligned, cv2.COLOR_RGB2BGR))
             
             results.append(FaceResult(
                 face_id=face_id,
@@ -571,15 +583,16 @@ class FacePipeline:
                 bbox=face.bbox,
                 confidence=face.confidence,
                 embedding=embedding,
-                thumbnail_path=thumbnail_path,
+                thumbnail_s3_key=thumbnail_s3_key,
                 blur_score=blur_score,
                 brightness_score=brightness_score
             ))
         
-        # 5. Add to search index
-        face_ids = [r.face_id for r in results]
-        emb_matrix = np.vstack([r.embedding for r in results])
-        self.search_engine.add(emb_matrix, face_ids)
+        # 5. Add to search index (if available)
+        if self.search_engine is not None:
+            face_ids = [r.face_id for r in results]
+            emb_matrix = np.vstack([r.embedding for r in results])
+            self.search_engine.add(emb_matrix, face_ids)
         
         return results
     
@@ -714,6 +727,7 @@ class FacePipeline:
 
 def create_pipeline(
     device: DeviceType = 'auto',
+    enable_search: bool = True,
     **kwargs
 ) -> FacePipeline:
     """
@@ -721,6 +735,7 @@ def create_pipeline(
     
     Args:
         device: 'cpu', 'gpu', or 'auto'
+        enable_search: Whether to enable FAISS vector search (default True)
         **kwargs: Additional arguments for FacePipeline
     
     Returns:
@@ -733,7 +748,12 @@ def create_pipeline(
         # Force device
         pipeline = create_pipeline(device='cpu')
         pipeline = create_pipeline(device='gpu')
+        
+        # Skip FAISS (useful for small batches or tests)
+        pipeline = create_pipeline(enable_search=False)
     """
+    if not enable_search:
+        kwargs['search_engine'] = False
     return FacePipeline(device=device, **kwargs)
 
 

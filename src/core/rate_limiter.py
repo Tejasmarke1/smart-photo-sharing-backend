@@ -1,15 +1,20 @@
 # utils/rate_limiter.py
 import os
 import time
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import redis.asyncio as redis
 from dotenv import load_dotenv
+from fastapi import HTTPException, status
+from functools import wraps
 
 load_dotenv()
 
 REDIS_URL = os.getenv("REDIS_URL")
-r = redis.from_url(REDIS_URL, decode_responses=True)
+try:
+    r = redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+except Exception:
+    r = None  # Allow app to start even if Redis is unavailable
 
 # Helpers / keys
 def _send_key(identifier: str) -> str:
@@ -33,6 +38,9 @@ async def can_send_otp(identifier: str) -> Tuple[bool, Optional[int]]:
     Check whether we can send an OTP to `identifier` (email or phone).
     Returns (allowed, retry_after_seconds_or_None).
     """
+    if r is None:
+        return True, None  # Allow if Redis is not available
+    
     # If identifier is locked due to repeated verify failures, deny immediately
     lock_ttl = await r.ttl(_lock_key(identifier))
     if lock_ttl and lock_ttl > 0:
@@ -56,6 +64,9 @@ async def record_failed_verify(identifier: str) -> Tuple[bool, Optional[int]]:
     Record a failed OTP verification attempt for identifier.
     Returns (locked_now_bool, lock_ttl_seconds_or_None)
     """
+    if r is None:
+        return False, None  # No locking if Redis is not available
+    
     key = _verify_key(identifier)
     current = await r.incr(key)
     if current == 1:
@@ -74,5 +85,51 @@ async def record_failed_verify(identifier: str) -> Tuple[bool, Optional[int]]:
 
 async def clear_verify_attempts(identifier: str) -> None:
     """Call on successful verification to reset counters."""
+    if r is None:
+        return  # Do nothing if Redis is not available
+    
     await r.delete(_verify_key(identifier))
-    await r.delete(_lock_key(identifier))
+    await r.delete(_lock_key(identifier))    
+
+
+
+def rate_limit(key_prefix: str, max_calls: int, period: int):
+    """
+    Rate-limit decorator using Redis.
+
+    Args:
+        key_prefix: unique key namespace
+        max_calls: allowed calls
+        period: window in seconds
+    """
+
+    def decorator(func: Callable):
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            if r is None:
+                # Skip rate limiting if Redis is not available
+                return await func(*args, **kwargs)
+
+            identifier = f"{key_prefix}:{func.__name__}"
+            key = f"rate_limit:{identifier}"
+
+            current = await r.incr(key)
+
+            if current == 1:
+                await r.expire(key, period)
+
+            if current > max_calls:
+                ttl = await r.ttl(key)
+
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Retry after {ttl}s"
+                )
+
+            return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+

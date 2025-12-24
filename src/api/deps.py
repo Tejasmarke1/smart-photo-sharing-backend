@@ -3,6 +3,8 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional
+from functools import wraps
+from typing import Callable
 
 from src.db.base import get_db
 from src.models.user import User
@@ -88,3 +90,25 @@ def get_client_ip(request: Request) -> str:
 def get_user_agent(request: Request) -> str:
     """Extract user agent."""
     return request.headers.get("User-Agent", "unknown")
+
+
+def require_roles(allowed_roles: list[str]):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(
+            *args,
+            current_user=Depends(get_current_user),
+            **kwargs
+        ):
+            # Support both ORM object and dict for tests
+            role = getattr(current_user, 'role', None)
+            if role is None and isinstance(current_user, dict):
+                role = current_user.get('role')
+            if role not in allowed_roles:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions"
+                )
+            return await func(*args, current_user=current_user, **kwargs)
+        return wrapper
+    return decorator
