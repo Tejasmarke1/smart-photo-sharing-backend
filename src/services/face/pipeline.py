@@ -400,7 +400,7 @@ class FlexibleFAISSVectorSearch(BaseFAISSVectorSearch):
         self,
         device: DeviceType = 'auto',
         embedding_dim: int = 512,
-        index_type: str = "IVF_PQ",
+        index_type: str = "Flat",
         **kwargs
     ):
         self.device = DeviceConfig.get_device(device)
@@ -592,7 +592,12 @@ class FacePipeline:
         if self.search_engine is not None:
             face_ids = [r.face_id for r in results]
             emb_matrix = np.vstack([r.embedding for r in results])
-            self.search_engine.add(emb_matrix, face_ids)
+            try:
+                self.search_engine.add(emb_matrix, face_ids)
+            except Exception as exc:
+                logger.warning("Skipping search index add: %s", exc)
+                # Disable search engine for this pipeline instance to avoid repeated failures
+                self.search_engine = None
         
         return results
     
