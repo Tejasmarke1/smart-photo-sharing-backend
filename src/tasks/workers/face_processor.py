@@ -45,7 +45,7 @@ class FaceTask(Task):
     """Base task class with common functionality."""
     
     # Retry configuration
-    autoretry_for = (Exception,)
+    autoretry_for = ()
     retry_kwargs = {'max_retries': 3}
     retry_backoff = True
     retry_backoff_max = 600
@@ -349,21 +349,14 @@ def process_album_photos_task(
             for photo in photos
         )
         
-        # Execute
+        # Execute asynchronously; avoid blocking within a task
         result = job.apply_async()
-        
-        # Wait for completion (optional, can be made async)
-        results = result.get()
-        
-        # Aggregate results
-        total_faces = sum(r.get('faces_saved', 0) for r in results if r)
-        
+
         return {
-            'status': 'completed',
+            'status': 'queued',
             'album_id': album_id,
-            'photos_processed': len(photos),
-            'total_faces': total_faces,
-            'results': results
+            'photos_queued': len(photos),
+            'group_id': result.id
         }
         
     except Exception as e:
@@ -458,12 +451,12 @@ def cluster_album_task(
             meta={'status': 'Running clustering', 'progress': 50}
         )
         
+        # Note: min_cluster_size and similarity_threshold are set in clusterer __init__
+        # If you need to customize per-task, recreate the clusterer with new params
         cluster_map = self.pipeline.clusterer.cluster(
             embeddings,
             face_ids,
-            photo_ids,
-            min_cluster_size=min_cluster_size,
-            eps=1 - similarity_threshold  # Convert similarity to distance
+            photo_ids
         )
         
         # Get unique clusters

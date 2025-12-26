@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 DeviceType = Literal['cpu', 'gpu', 'auto']
 
 
+def get_db() -> Any:
+    """Placeholder for database connection retrieval."""
+    # Implement your DB connection logic here
+    from src.db.base import SessionLocal
+    return SessionLocal()
+
+
+
 # =============================================================================
 # Hardware Configuration Helper
 # =============================================================================
@@ -115,38 +123,27 @@ class FlexibleRetinaFaceDetector:
         self._init_detector()
     
     def _init_detector(self):
-        """Initialize the detector backend."""
+        """Initialize the detector backend using InsightFace RetinaFace."""
         try:
-            from retinaface import RetinaFace
-            
-            # RetinaFace initialization
-            self.detector = RetinaFace(
-                quality='normal' if self.device == 'cpu' else 'high'
-            )
-            
-            logger.info(f"✓ RetinaFace initialized on {self.device.upper()}")
-            
-        except (ImportError, TypeError):
-            logger.warning(f"⚠️  RetinaFace not available or incompatible, using fallback")
-            # Fallback to InsightFace
+            # Use InsightFace's FaceAnalysis which includes optimized RetinaFace detector
             from insightface.app import FaceAnalysis
             
-            settings = DeviceConfig.get_settings(self.device)
+            # Initialize FaceAnalysis with buffalo_l model (includes det_10g SCRFD detector)
+            self.face_analysis = FaceAnalysis('buffalo_l')
+            self.detector = self.face_analysis.det_model
             
-            self.detector = FaceAnalysis(
-                name='buffalo_l',
-                providers=settings['providers']
-            )
+            # Set detection size based on device
+            self.det_input_size = self.det_size
             
-            ctx_id = 0 if self.device == 'gpu' else -1
-            self.detector.prepare(
-                ctx_id=ctx_id,
-                det_size=self.det_size,
-                det_thresh=self.conf_threshold
-            )
+            logger.info(f"✓ InsightFace RetinaFace detector initialized on {self.device.upper()}")
+            logger.info(f"  Detection size: {self.det_input_size}")
             
-            self._using_insightface = True
-            logger.info(f"✓ Using InsightFace fallback on {self.device.upper()}")
+        except ImportError as e:
+            logger.error(f"❌ InsightFace package not installed: {e}")
+            raise RuntimeError(f"InsightFace is required for face detection: {e}")
+        except Exception as e:
+            logger.error(f"❌ Detector initialization failed: {type(e).__name__}: {e}")
+            raise RuntimeError(f"Failed to initialize detector: {e}")
     
     def detect(
         self,
@@ -155,43 +152,17 @@ class FlexibleRetinaFaceDetector:
         max_faces: Optional[int] = None
     ) -> List[DetectedFace]:
         """
-        Detect faces in image.
+        Detect faces in image using InsightFace RetinaFace.
         
-        Compatible with your existing DetectedFace dataclass.
+        Args:
+            image: RGB image (H, W, 3)
+            min_face_size: Minimum face size in pixels
+            max_faces: Maximum number of faces to return
+            
+        Returns:
+            List of DetectedFace objects
         """
-        if hasattr(self, '_using_insightface'):
-            return self._detect_insightface(image, min_face_size, max_faces)
-        else:
-            return self._detect_retinaface(image, min_face_size, max_faces)
-    
-    def _detect_insightface(
-        self,
-        image: np.ndarray,
-        min_face_size: int,
-        max_faces: Optional[int]
-    ) -> List[DetectedFace]:
-        """Detect using InsightFace."""
-        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        faces = self.detector.get(image_bgr)
-        
-        results = []
-        for face in faces:
-            x1, y1, x2, y2 = face.bbox.astype(int)
-            w, h = x2 - x1, y2 - y1
-            
-            if w < min_face_size or h < min_face_size:
-                continue
-            
-            results.append(DetectedFace(
-                bbox=(x1, y1, w, h),
-                confidence=float(face.det_score),
-                landmarks=face.kps
-            ))
-        
-        if max_faces:
-            results = results[:max_faces]
-        
-        return results
+        return self._detect_retinaface(image, min_face_size, max_faces)
     
     def _detect_retinaface(
         self,
@@ -199,37 +170,49 @@ class FlexibleRetinaFaceDetector:
         min_face_size: int,
         max_faces: Optional[int]
     ) -> List[DetectedFace]:
-        """Detect using RetinaFace."""
-        detections = self.detector.detect_faces(
-            image,
-            threshold=self.conf_threshold
-        )
+        """Detect using InsightFace RetinaFace (det_10g SCRFD model).
+        
+        Returns bboxes as (N, 5) array where each row is [x1, y1, x2, y2, confidence]
+        and optional landmarks as (N, 5, 2) array with 5 keypoints per face.
+        """
+        # Detect faces with landmarks
+        # Returns: (bboxes, landmarks) tuple
+        # bboxes: (N, 5) array [x1, y1, x2, y2, confidence]
+        # landmarks: (N, 5, 2) array with 5 keypoints (eyes, nose, mouth corners)
+        bboxes, landmarks = self.detector.detect(image, input_size=self.det_input_size)
         
         faces = []
-        for key, detection in detections.items():
-            bbox = detection['facial_area']
-            x, y = bbox[0], bbox[1]
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        for i, bbox in enumerate(bboxes):
+            x1, y1, x2, y2, confidence = bbox
             
+            # Skip low confidence detections
+            if confidence < self.conf_threshold:
+                continue
+            
+            # Convert from (x1, y1, x2, y2) to (x, y, w, h)
+            x, y = int(x1), int(y1)
+            w, h = int(x2 - x1), int(y2 - y1)
+            
+            # Filter by minimum size
             if w < min_face_size or h < min_face_size:
                 continue
             
-            landmarks = np.array([
-                detection['landmarks']['left_eye'],
-                detection['landmarks']['right_eye'],
-                detection['landmarks']['nose'],
-                detection['landmarks']['mouth_left'],
-                detection['landmarks']['mouth_right']
-            ], dtype=np.float32)
+            # Get landmarks for this face if available
+            face_landmarks = None
+            if landmarks is not None and i < len(landmarks):
+                # landmarks[i] has shape (5, 2) - 5 keypoints with x, y coordinates
+                face_landmarks = landmarks[i].astype(np.float32)
             
             faces.append(DetectedFace(
                 bbox=(x, y, w, h),
-                confidence=detection['score'],
-                landmarks=landmarks
+                confidence=float(confidence),
+                landmarks=face_landmarks
             ))
         
+        # Sort by confidence
         faces.sort(key=lambda x: x.confidence, reverse=True)
         
+        # Limit number of faces
         if max_faces:
             faces = faces[:max_faces]
         
@@ -305,21 +288,32 @@ class FlexibleTensorRTEmbedder:
         logger.info(f"✓ TensorRT engine loaded from {engine_path}")
     
     def _init_onnx(self):
-        """Initialize ONNX Runtime."""
-        from insightface.app import FaceAnalysis
-        
+        """Initialize ONNX Runtime for direct embedding (ArcFace)."""
         settings = DeviceConfig.get_settings(self.device)
-        
-        self.app = FaceAnalysis(
-            name='buffalo_l',
-            providers=settings['providers']
-        )
-        
         ctx_id = 0 if self.device == 'gpu' else -1
-        self.app.prepare(ctx_id=ctx_id)
-        
-        self.backend = 'onnx'
-        logger.info(f"✓ ONNX Runtime initialized on {self.device.upper()}")
+        try:
+            from insightface.app import FaceAnalysis
+            from insightface.model_zoo.arcface_onnx import ArcFaceONNX
+
+            # Detection/landmark pipeline
+            self.app = FaceAnalysis(name='buffalo_l', providers=settings['providers'])
+            self.app.prepare(ctx_id=ctx_id, det_size=settings['det_size'])
+
+            # Explicitly load recognition model instance to avoid unbound class errors
+            model_dir = os.path.join(os.path.expanduser('~'), '.insightface', 'models', 'buffalo_l')
+            rec_path = os.path.join(model_dir, 'w600k_r50.onnx')
+            if not os.path.exists(rec_path):
+                raise FileNotFoundError(f'Recognition model not found at {rec_path}')
+
+            self.rec_model = ArcFaceONNX(model_file=rec_path)
+            self.rec_model.prepare(ctx_id=ctx_id)
+
+            self.backend = 'onnx'
+            logger.info(f"✓ InsightFace recognition model initialized on {self.device.upper()}")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize InsightFace recognition: {e}")
+            # Propagate to fail fast instead of silently producing zero embeddings
+            raise
     
     def embed(self, face: np.ndarray) -> np.ndarray:
         """
@@ -336,15 +330,27 @@ class FlexibleTensorRTEmbedder:
         else:
             return self._embed_onnx(face)
     
-    def _embed_onnx(self, face: np.ndarray) -> np.ndarray:
-        """Embed using ONNX Runtime."""
-        face_bgr = cv2.cvtColor(face, cv2.COLOR_RGB2BGR)
-        faces = self.app.get(face_bgr)
-        
-        if len(faces) == 0:
-            return np.zeros(self.embedding_dim, dtype=np.float32)
-        
-        return faces[0].normed_embedding
+    def _embed_onnx(self, face: np.ndarray) -> Optional[np.ndarray]:
+        try:
+            face_bgr = cv2.cvtColor(face, cv2.COLOR_RGB2BGR)
+            if self.rec_model is None:
+                raise RuntimeError("Recognition model not initialized")
+
+            emb = self.rec_model.get_feat(face_bgr)
+            emb = np.asarray(emb, dtype=np.float32).reshape(-1)
+
+            if emb.shape[0] != self.embedding_dim:
+                raise ValueError(f"Invalid embedding dimension: {emb.shape[0]}")
+
+            norm = np.linalg.norm(emb)
+            if norm < 1e-6:
+                raise ValueError("Embedding norm too small (possible zero embedding)")
+
+            return emb / norm
+
+        except Exception as e:
+            logger.warning(f"Embedding failed: {e}")
+            return None
     
     def _embed_tensorrt(self, face: np.ndarray) -> np.ndarray:
         """Embed using TensorRT."""
@@ -375,12 +381,43 @@ class FlexibleTensorRTEmbedder:
         # Process in batches
         for i in range(0, len(faces), self.batch_size):
             batch = faces[i:i + self.batch_size]
-            
-            for face in batch:
-                emb = self.embed(face)
-                embeddings.append(emb)
-        
-        return np.array(embeddings)
+            batch_bgr = [cv2.cvtColor(f, cv2.COLOR_RGB2BGR) for f in batch]
+            if self.rec_model is None:
+                raise RuntimeError("Recognition model not initialized")
+            try:
+                embs = np.vstack([self.rec_model.get_feat(b) for b in batch_bgr])
+                norms = np.linalg.norm(embs, axis=1, keepdims=True)
+                # Guard against zero norms
+                mask = norms[:, 0] >= 1e-6
+                if not np.all(mask):
+                    logger.warning("Zero/near-zero embeddings detected in batch; filtering them out")
+                embs = embs[mask]
+                norms = norms[mask]
+                if embs.shape[0] == 0:
+                    logger.warning("All embeddings in batch were invalid (zero norm)")
+                    continue
+                embs = (embs / norms).astype(np.float32)
+                embeddings.append(embs)
+                continue
+            except Exception as e:
+                logger.warning(f"Batch embedding failed; falling back per-face: {e}")
+            # Fallback per-face
+            per_face_embs = []
+            for b in batch: 
+                emb = self._embed_onnx(b)
+                if emb is None:
+                    continue
+                per_face_embs.append(emb)
+            if len(per_face_embs) == 0:
+                logger.warning("No valid embeddings produced in this batch")
+                continue
+            embeddings.append(np.vstack(per_face_embs))
+        # Stack results
+        if len(embeddings) == 0:
+            return np.zeros((0, self.embedding_dim), dtype=np.float32)
+        if isinstance(embeddings[0], np.ndarray) and embeddings[0].ndim == 2:
+            return np.vstack(embeddings)
+        return np.vstack([np.array(e) for e in embeddings])
 
 
 # =============================================================================
@@ -528,6 +565,11 @@ class FacePipeline:
         
         logger.info("="*60)
         logger.info("✅ Pipeline Ready!")
+        logger.info(f"  - Detector: {type(self.detector).__name__}")
+        logger.info(f"  - Aligner: {type(self.aligner).__name__}")
+        logger.info(f"  - Embedder: {type(self.embedder).__name__}")
+        logger.info(f"  - Search Engine: {type(self.search_engine).__name__ if self.search_engine else 'DISABLED'}")
+        logger.info(f"  - Clusterer: {type(self.clusterer).__name__ if self.clusterer else 'None'}")
         logger.info("="*60)
     
     def process_photo(
@@ -565,6 +607,9 @@ class FacePipeline:
         for i, (face, aligned, embedding) in enumerate(
             zip(detected_faces, aligned_faces, embeddings)
         ):
+            if embedding is None or (np.linalg.norm(embedding) < 1e-6):
+                logger.warning("Skipping face due to invalid/zero embedding")
+                continue
             face_id = str(uuid.uuid4())
             
             # Quality assessment
@@ -575,7 +620,15 @@ class FacePipeline:
             thumbnail_s3_key = None
             if save_crops:
                 thumbnail_s3_key = f"faces/{photo_id}/{face_id}.jpg"
-                cv2.imwrite(thumbnail_s3_key, cv2.cvtColor(aligned, cv2.COLOR_RGB2BGR))
+                success,buffer=cv2.imencode(
+                    ".jpg",
+                    cv2.cvtColor(aligned, cv2.COLOR_RGB2BGR),
+                    [cv2.IMWRITE_JPEG_QUALITY, 90]
+                )
+                if not success:
+                    logger.warning("Failed to encode face thumbnail")
+                    thumbnail_s3_key = None
+                
             
             results.append(FaceResult(
                 face_id=face_id,
@@ -591,9 +644,9 @@ class FacePipeline:
         # 5. Add to search index (if available)
         if self.search_engine is not None:
             face_ids = [r.face_id for r in results]
-            emb_matrix = np.vstack([r.embedding for r in results])
+            ix = np.vstack([r.embedding for r in results])
             try:
-                self.search_engine.add(emb_matrix, face_ids)
+                self.search_engine.add(ix, face_ids)
             except Exception as exc:
                 logger.warning("Skipping search index add: %s", exc)
                 # Disable search engine for this pipeline instance to avoid repeated failures
@@ -670,24 +723,129 @@ class FacePipeline:
         Returns:
             List of matching faces with scores
         """
+        logger.info(f"🔍 search_by_selfie called - k={k}, threshold={threshold}, album_id={album_id}")
+        
+        if self.search_engine is None:
+            logger.error("❌ Search engine is None! Cannot perform search. This usually means FAISS initialization failed or was disabled during previous errors.")
+            return []
+        
+        logger.info(f"✅ Search engine available: {type(self.search_engine).__name__}")
+        
         # Detect face in selfie
+        logger.info("🔍 Detecting face in selfie...")
         faces = self.detector.detect(selfie_image, max_faces=1)
         
         if not faces:
+            logger.warning("⚠️ No face detected in selfie")
             return []
         
-        # Align and embed
-        aligned = self.aligner.align(selfie_image, faces[0].landmarks)
-        query_embedding = self.embedder.embed(aligned)
+        logger.info(f"✅ Detected {len(faces)} face(s) in selfie")
         
+        # Align and embed
+        logger.info("🎯 Aligning face...")
+        aligned = self.aligner.align(selfie_image, faces[0].landmarks, faces[0].bbox)
+        logger.info("🧮 Generating embedding...")
+        query_embedding = self.embedder.embed(aligned)
+        if query_embedding is None or (np.linalg.norm(query_embedding) < 1e-6):
+            logger.warning("⚠️ Selfie embedding invalid/zero; aborting search")
+            return []
+        logger.info(f"✅ Embedding shape: {query_embedding.shape}, dtype: {query_embedding.dtype}")
+        
+        # Check if search engine has any faces indexed
+        if hasattr(self.search_engine, 'index') and hasattr(self.search_engine.index, 'ntotal'):
+            num_indexed = self.search_engine.index.ntotal
+            logger.info(f"📊 FAISS index has {num_indexed} faces indexed")
+            if num_indexed == 0:
+                logger.warning("⚠️ FAISS empty — rebuilding index from DB.")
+                db = get_db()
+                count = self.rebuild_index_from_db(db=db, album_id=None)
+                db.close()
+                logger.info(f"✅ Rebuilt index with {count} faces")
+        else:
+            logger.warning("⚠️ Cannot check index size - search engine may not be FAISS")
+        
+        logger.info(f"🔎 Searching for selfie match with k={k}, threshold={threshold}")
         # Search
         results = self.search_engine.search(
             query_embedding,
             k=k,
             threshold=threshold
         )
+        logger.info(f"📊 Selfie search returned {len(results)} raw results")
         
-        return results
+        # Normalize result schema - the search method returns 'similarity', not 'score'
+        normalized = []
+        for r in results:
+            if isinstance(r, dict):
+                normalized.append({
+                    'face_id': r.get('face_id'),
+                    'score': float(r.get('similarity', 0.0)),
+                })
+        return normalized
+
+    def rebuild_index_from_db(self, db, album_id: Optional[str] = None) -> int:
+        """Rebuild FAISS index from database embeddings.
+
+        Args:
+            db: SQLAlchemy session
+            album_id: Optional album UUID string to scope the index
+
+        Returns:
+            Number of faces indexed
+        """
+        try:
+            # Local imports to avoid circular dependencies
+            from src.models.face import Face
+            from src.models.photo import Photo
+
+            # Query faces with embeddings
+            if album_id:
+                faces_q = (
+                    db.query(Face)
+                    .join(Photo)
+                    .filter(Photo.album_id == uuid.UUID(album_id))
+                    .filter(Face.embedding.isnot(None))
+                )
+            else:
+                faces_q = db.query(Face).filter(Face.embedding.isnot(None))
+
+            faces = faces_q.all()
+
+            if not faces:
+                logger.info("No faces with embeddings found in DB; index remains empty")
+                # Reset engine to a fresh empty index
+                self.search_engine = FlexibleFAISSVectorSearch(device=self.device)
+                return 0
+
+            # Build embeddings matrix and ids
+            embs: List[np.ndarray] = []
+            face_ids: List[str] = []
+            for f in faces:
+                try:
+                    vec = np.array(f.embedding, dtype=np.float32)
+                    if vec.ndim == 1:
+                        embs.append(vec)
+                        face_ids.append(str(f.id))
+                except Exception:
+                    continue
+
+            if not embs:
+                logger.warning("Embeddings list is empty after parsing; resetting index")
+                self.search_engine = FlexibleFAISSVectorSearch(device=self.device)
+                return 0
+
+            embeddings = np.vstack(embs)
+
+            # Reset search engine and (re)create index fresh
+            self.search_engine = FlexibleFAISSVectorSearch(device=self.device)
+            self.search_engine.add(embeddings, face_ids)
+            logger.info(f"Rebuilt FAISS index from DB with {len(face_ids)} faces")
+            return len(face_ids)
+        except Exception as e:
+            logger.error(f"Failed to rebuild FAISS index from DB: {e}")
+            # Ensure we at least have a valid empty engine
+            self.search_engine = FlexibleFAISSVectorSearch(device=self.device)
+            raise
     
     def get_device_info(self) -> Dict[str, Any]:
         """Get current device configuration."""
@@ -784,7 +942,7 @@ def create_pipeline_from_env() -> FacePipeline:
     device = os.getenv('FACE_DEVICE', 'auto')
     return create_pipeline(device=device)
 
-
+    
 # =============================================================================
 # Usage Examples
 # =============================================================================

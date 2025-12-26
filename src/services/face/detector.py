@@ -1,15 +1,16 @@
 from typing import List, Tuple, Optional
 import numpy as np
-import cv2
-from retinaface import RetinaFace as RF
 from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class DetectedFace:
     """Face detection result."""
     bbox: Tuple[int, int, int, int]  # x, y, w, h
     confidence: float
-    landmarks: np.ndarray  # 5 points: eyes, nose, mouth corners
+    landmarks: Optional[np.ndarray] = None  # 5 points: eyes, nose, mouth corners
     
     @property
     def area(self) -> int:
@@ -18,31 +19,48 @@ class DetectedFace:
 
 class RetinaFaceDetector:
     """
-    RetinaFace detector wrapper with batching and optimization.
+    InsightFace RetinaFace detector wrapper (det_10g SCRFD model).
     
     Features:
-    - Multi-scale detection
-    - NMS post-processing
+    - High-accuracy face detection using SCRFD
+    - 5-point facial landmarks
     - Confidence filtering
     - Batch processing
+    - CPU/GPU automatic detection
     """
     
     def __init__(
         self,
-        model_path: str = "models/retinaface.pth",
         conf_threshold: float = 0.8,
-        nms_threshold: float = 0.4,
-        device: str = "cuda:0"
+        device: str = "cpu"
     ):
-        self.conf_threshold = conf_threshold
-        self.nms_threshold = nms_threshold
-        self.device = device
+        """
+        Initialize RetinaFace detector using InsightFace.
         
-        # Initialize RetinaFace
-        self.detector = RF(
-            model_path=model_path,
-            device=device
-        )
+        Args:
+            conf_threshold: Confidence threshold for detections
+            device: Device to use ('cpu' or 'gpu')
+        """
+        self.conf_threshold = conf_threshold
+        self.device = device
+        self.det_size = (480, 480) if device == 'cpu' else (640, 640)
+        
+        logger.info(f"Initializing InsightFace RetinaFace detector on {device.upper()}")
+        
+        try:
+            from insightface.app import FaceAnalysis
+            
+            # Load FaceAnalysis with buffalo_l model (includes det_10g SCRFD detector)
+            self.face_analysis = FaceAnalysis('buffalo_l')
+            self.detector = self.face_analysis.det_model
+            
+            logger.info(f"✓ InsightFace RetinaFace detector initialized on {device.upper()}")
+        except ImportError as e:
+            logger.error(f"Failed to import InsightFace: {e}")
+            raise RuntimeError(f"InsightFace is required for face detection: {e}")
+        except Exception as e:
+            logger.error(f"Failed to initialize detector: {type(e).__name__}: {e}")
+            raise RuntimeError(f"Failed to initialize detector: {e}")
     
     def detect(
         self, 
@@ -51,7 +69,7 @@ class RetinaFaceDetector:
         max_faces: Optional[int] = None
     ) -> List[DetectedFace]:
         """
-        Detect faces in image.
+        Detect faces in image using InsightFace RetinaFace.
         
         Args:
             image: RGB image (H, W, 3)
@@ -61,36 +79,37 @@ class RetinaFaceDetector:
         Returns:
             List of DetectedFace objects, sorted by confidence
         """
-        # Run detection
-        detections = self.detector.detect_faces(
-            image,
-            threshold=self.conf_threshold,
-            nms_threshold=self.nms_threshold
-        )
+        # Run detection - returns (bboxes, landmarks) tuple
+        # bboxes: (N, 5) array [x1, y1, x2, y2, confidence]
+        # landmarks: (N, 5, 2) array with 5 keypoints per face
+        bboxes, landmarks = self.detector.detect(image, input_size=self.det_size)
         
         faces = []
-        for key, detection in detections.items():
-            bbox = detection['facial_area']  # [x1, y1, x2, y2]
-            x, y = bbox[0], bbox[1]
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        for i, bbox in enumerate(bboxes):
+            x1, y1, x2, y2, confidence = bbox
+            
+            # Skip low confidence detections
+            if confidence < self.conf_threshold:
+                continue
+            
+            # Convert from (x1, y1, x2, y2) to (x, y, w, h)
+            x, y = int(x1), int(y1)
+            w, h = int(x2 - x1), int(y2 - y1)
             
             # Filter by size
             if w < min_face_size or h < min_face_size:
                 continue
             
-            # Extract landmarks (left eye, right eye, nose, left mouth, right mouth)
-            landmarks = np.array([
-                detection['landmarks']['left_eye'],
-                detection['landmarks']['right_eye'],
-                detection['landmarks']['nose'],
-                detection['landmarks']['mouth_left'],
-                detection['landmarks']['mouth_right']
-            ], dtype=np.float32)
+            # Extract landmarks if available
+            face_landmarks = None
+            if landmarks is not None and i < len(landmarks):
+                # landmarks[i] has shape (5, 2) - 5 keypoints with x, y coordinates
+                face_landmarks = landmarks[i].astype(np.float32)
             
             faces.append(DetectedFace(
                 bbox=(x, y, w, h),
-                confidence=detection['score'],
-                landmarks=landmarks
+                confidence=float(confidence),
+                landmarks=face_landmarks
             ))
         
         # Sort by confidence

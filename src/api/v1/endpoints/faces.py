@@ -28,6 +28,7 @@ from fastapi import (
     UploadFile, 
     File,
     Query,
+    Body,
     BackgroundTasks
 )
 from fastapi.responses import JSONResponse
@@ -57,7 +58,7 @@ from src.schemas.face import (
     FaceListResult,
     JobAccepted
 )
-from src.tasks.workers.face_processor import process_faces_task, cluster_album_task
+from src.tasks.workers.face_processor import process_faces_task, process_album_photos_task, cluster_album_task
 from src.core.cache import cache_result, invalidate_cache
 from src.core.rate_limiter import rate_limit
 from src.utils.validators import validate_image
@@ -627,7 +628,7 @@ async def search_by_embedding(
     description="Run clustering to group similar faces (find same people)",
     status_code=status.HTTP_202_ACCEPTED
 )
-@require_roles(['photographer', 'admin'])
+@require_roles(['photographer', 'admin','guest'])
 async def cluster_album(
     album_id: UUID,
     request: FaceClusterRequest,
@@ -741,6 +742,50 @@ async def detect_faces_in_photo(
         "message": "Face detection job started",
         "job_id": str(task_id),
         "photo_id": str(photo_id),
+        "status_url": f"/api/v1/jobs/{task_id}"
+    }
+
+
+class AlbumDetectRequest(BaseModel):
+    photo_ids: Optional[List[UUID]] = Field(None, description="Process only these photos; default is all in album")
+
+
+@router.post(
+    "/albums/{album_id}/detect",
+    response_model=JobAccepted,
+    summary="Detect faces across an album",
+    description="Enqueue face detection for all photos in an album (or a provided subset)",
+    status_code=status.HTTP_202_ACCEPTED
+)
+@require_roles(['photographer', 'admin','guest'])
+async def detect_faces_in_album(
+    album_id: UUID,
+    request: AlbumDetectRequest = Body(default_factory=AlbumDetectRequest),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Trigger face detection for every photo in an album (or a specified subset)."""
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Album {album_id} not found")
+
+    user_id = getattr(current_user, 'id', None)
+    role = getattr(current_user, 'role', None)
+    if isinstance(current_user, dict):
+        user_id = user_id or current_user.get('id')
+        role = role or current_user.get('role')
+    if album.photographer_id not in (user_id,) and role != 'admin':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    photo_ids = [str(pid) for pid in request.photo_ids] if request.photo_ids else None
+    task_id = process_album_photos_task.delay(str(album_id), photo_ids)
+
+    logger.info(f"Enqueued album face detection task {task_id} for album {album_id} (photos={len(photo_ids) if photo_ids else 'all'})")
+
+    return {
+        "message": "Album face detection job started",
+        "job_id": str(task_id),
+        "album_id": str(album_id),
         "status_url": f"/api/v1/jobs/{task_id}"
     }
 
