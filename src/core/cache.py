@@ -495,10 +495,33 @@ else:
     cache: CacheBackend = RedisCache(settings.REDIS_URL)
 
 
+# Expose redis_client for direct Redis operations
+@property
+def redis_client():
+    """Get the underlying Redis client instance."""
+    if isinstance(cache, RedisCache):
+        return cache.redis
+    return None
+
+
+# For easier access, create a simple function
+def get_redis_client():
+    """Get the underlying Redis client instance."""
+    if isinstance(cache, RedisCache):
+        return cache.redis
+    return None
+
+
+# Create an alias for compatibility
+redis_client = cache if isinstance(cache, RedisCache) else None
+
+
 async def init_cache():
     """Initialize cache backend."""
+    global redis_client
     if isinstance(cache, RedisCache):
         await cache.connect()
+        redis_client = cache  # Update after connection
 
 
 async def close_cache():

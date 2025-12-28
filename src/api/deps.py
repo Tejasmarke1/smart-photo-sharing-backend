@@ -112,3 +112,26 @@ def require_roles(allowed_roles: list[str]):
             return await func(*args, current_user=current_user, **kwargs)
         return wrapper
     return decorator
+
+
+def get_current_user_ws(
+    token: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """Get current user for WebSocket connections."""
+    if token is None:
+        return None
+    
+    payload = decode_token(token)
+    if payload is None or payload.get("type") != "access":
+        return None
+    
+    user_id: str = payload.get("sub")
+    if user_id is None:
+        return None
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not user.is_active:
+        return None
+    
+    return user

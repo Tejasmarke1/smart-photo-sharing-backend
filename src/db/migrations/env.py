@@ -41,7 +41,8 @@ model_modules = [
     "src.models.face_person",
     "src.models.audit_log",
     "src.models.download",
-    "src.models.person"
+    "src.models.person",
+    "src.models.face_cluster",
 ]
 
 for mod in model_modules:

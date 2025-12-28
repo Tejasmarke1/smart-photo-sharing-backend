@@ -8,6 +8,7 @@ celery_app = Celery(
     include=[
         'src.tasks.workers.face_processor',
         'src.tasks.workers.search_worker',
+        'src.tasks.workers.person_worker',
     ]
 )
 
@@ -27,7 +28,8 @@ celery_app.conf.update(
 # Optional: force-import module to ensure task registration in some environments
 try:
     from src.tasks.workers import face_processor  # noqa: F401
-    from src.tasks.workers import search_worker  # noqa: F401
+    from src.tasks.workers import search_worker
+    from src.tasks.workers import person_worker  # noqa: F401
 except Exception:
     pass
 

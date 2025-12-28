@@ -17,6 +17,10 @@ class S3ServiceError(Exception):
     pass
 
 
+# Alias for compatibility
+S3ServiceException = S3ServiceError
+
+
 class S3Service:
     """Service for S3 operations with comprehensive error handling."""
     
