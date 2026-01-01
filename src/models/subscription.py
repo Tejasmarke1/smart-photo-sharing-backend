@@ -20,7 +20,7 @@ class Subscription(Base, TimestampMixin):
     
     # Subscription details
     plan_id = Column(UUID(as_uuid=True), ForeignKey('plans.id', ondelete='RESTRICT'), nullable=False, index=True)
-    status = Column(SQLEnum(SubscriptionStatus), default=SubscriptionStatus.active, nullable=False, index=True)
+    status = Column(SQLEnum(SubscriptionStatus,name="subscriptionstatus"), default=SubscriptionStatus.active, nullable=False, index=True)
     
     # Razorpay subscription details
     razorpay_subscription_id = Column(String(255), unique=True, nullable=True, index=True)

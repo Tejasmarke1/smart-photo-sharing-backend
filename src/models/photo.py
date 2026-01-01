@@ -30,7 +30,7 @@ class Photo(Base, TimestampMixin, SoftDeleteMixin):
     height = Column(Integer, nullable=True)
     
     # Processing status
-    status = Column(SQLEnum(PhotoStatus), default=PhotoStatus.uploaded, nullable=False, index=True)
+    status = Column(SQLEnum(PhotoStatus,name="photostatus"), default=PhotoStatus.uploaded, nullable=False, index=True)
     processing_error = Column(Text, nullable=True)
     
     # EXIF and metadata

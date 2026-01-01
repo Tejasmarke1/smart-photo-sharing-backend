@@ -19,7 +19,7 @@ class AuditLog(Base, TimestampMixin):
     actor_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     
     # Action details
-    action = Column(SQLEnum(AuditAction), nullable=False, index=True)
+    action = Column(SQLEnum(AuditAction,name="auditaction"), nullable=False, index=True)
     target_type = Column(String(50), nullable=False, index=True)  # 'album', 'photo', 'user', etc.
     target_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     

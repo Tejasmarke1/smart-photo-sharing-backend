@@ -20,7 +20,7 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     email = Column(String(255), unique=True, nullable=False, index=True)
     phone = Column(String(20), unique=True, nullable=True, index=True)
     hashed_password = Column(String(255), nullable=False)   
-    role = Column(SQLEnum(UserRole), default=UserRole.guest, nullable=False, index=True)
+    role = Column(SQLEnum(UserRole,name="userrole"), default=UserRole.guest, nullable=False, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     profile_picture_url = Column(String(512), nullable=True)

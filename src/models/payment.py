@@ -27,7 +27,7 @@ class Payment(Base, TimestampMixin):
     # Payment details
     amount_cents = Column(BigInteger, nullable=False)  # Store in smallest currency unit
     currency = Column(String(3), default='INR', nullable=False)
-    status = Column(SQLEnum(PaymentStatus), default=PaymentStatus.pending, nullable=False, index=True)
+    status = Column(SQLEnum(PaymentStatus,name="paymentstatus"), default=PaymentStatus.pending, nullable=False, index=True)
     
     # Payment type
     payment_type = Column(String(50), nullable=False)  # 'download', 'subscription', 'print'
