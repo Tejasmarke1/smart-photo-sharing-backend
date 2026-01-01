@@ -6,7 +6,7 @@ import uuid
 
 from src.db.base import Base
 from .base import TimestampMixin
-from .enums import SubscriptionPlan, SubscriptionStatus
+from .enums import SubscriptionStatus
 
 
 
@@ -19,7 +19,7 @@ class Subscription(Base, TimestampMixin):
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     
     # Subscription details
-    plan = Column(SQLEnum(SubscriptionPlan), nullable=False)
+    plan_id = Column(UUID(as_uuid=True), ForeignKey('plans.id', ondelete='RESTRICT'), nullable=False, index=True)
     status = Column(SQLEnum(SubscriptionStatus), default=SubscriptionStatus.active, nullable=False, index=True)
     
     # Razorpay subscription details

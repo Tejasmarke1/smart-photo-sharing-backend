@@ -33,6 +33,12 @@ class SubscriptionPlan(str, enum.Enum):
     basic = "basic"
     pro = "pro"
     enterprise = "enterprise"
+    
+    
+class BillingCycle(str, enum.Enum):
+    """Billing cycle types."""
+    monthly = "monthly"
+    yearly = "yearly"
 
 
 class SubscriptionStatus(str, enum.Enum):

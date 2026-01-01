@@ -23,6 +23,9 @@ from .download import Download
 from .otp import OTP
 from .refresh_token import RefreshToken
 from .login_history import LoginHistory
+from .webhook_event import WebhookEvent
+from .plan import Plan
+from .storage_usage import StorageUsage
 
 __all__ = [
     "TimestampMixin",
@@ -48,4 +51,7 @@ __all__ = [
     "OTP",
     "RefreshToken",
     "LoginHistory",
+    "WebhookEvent",
+    "Plan",
+    "StorageUsage",
 ]

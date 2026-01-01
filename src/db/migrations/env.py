@@ -43,6 +43,10 @@ model_modules = [
     "src.models.download",
     "src.models.person",
     "src.models.face_cluster",
+    "src.models.search_history",
+    "src.models.webhook_event",
+    "src.models.plan",
+    "src.models.storage_usage",
 ]
 
 for mod in model_modules:
