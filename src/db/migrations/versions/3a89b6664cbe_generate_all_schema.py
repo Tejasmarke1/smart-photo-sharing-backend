@@ -1,18 +1,17 @@
 """generate all schema
 
-Revision ID: d7bd79b310ff
+Revision ID: 3a89b6664cbe
 Revises: 
-Create Date: 2026-01-01 16:00:36.741585
+Create Date: 2026-01-01 16:33:21.093021
 
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-import uuid
 import pgvector.sqlalchemy
 
 # revision identifiers, used by Alembic.
-revision = 'd7bd79b310ff'
+revision = '3a89b6664cbe'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -44,7 +43,7 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('code', sa.String(length=50), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=False),
-    sa.Column('role', sa.Enum('photographer', 'editor', 'guest', 'admin', name='userrole'), nullable=False),
+    sa.Column('role', sa.Enum('photographer', 'user', name='planaudiance'), nullable=False),
     sa.Column('storage_limit_bytes', sa.BigInteger(), nullable=False),
     sa.Column('price_cents', sa.BigInteger(), nullable=False),
     sa.Column('currency', sa.String(length=3), nullable=False),

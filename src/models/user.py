@@ -35,6 +35,10 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     subscriptions = relationship('Subscription', back_populates='user')
     audit_logs = relationship('AuditLog', back_populates='actor', foreign_keys='AuditLog.actor_id')
     
+    
+    storage_usage = relationship("StorageUsage",back_populates="user",uselist=False,cascade="all, delete-orphan"
+    )
+    
     def __repr__(self) -> str:
         return f'<User(id={self.id}, email={self.email}, role={self.role})>'
 

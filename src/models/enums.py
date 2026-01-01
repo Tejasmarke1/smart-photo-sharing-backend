@@ -67,3 +67,8 @@ class FaceQuality(str, enum.Enum):
     medium = 'medium'
     low = 'low'
     unknown = 'unknown' 
+    
+class PlanAudiance(str, enum.Enum):
+    """Plan audience types."""
+    photographer = "photographer"
+    user="user"

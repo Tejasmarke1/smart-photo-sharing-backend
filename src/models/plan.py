@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, BigInteger
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy import Enum as SQLEnum
-from src.models.enums import UserRole , BillingCycle
+from src.models.enums import UserRole , BillingCycle ,PlanAudiance
 
 import uuid
 from src.db.base import Base
@@ -14,7 +14,7 @@ class Plan(Base, TimestampMixin):
     id = Column(UUID(as_uuid=True),primary_key=True, default=uuid.uuid4, index=True)
     code = Column(String((50)),nullable=False, unique=True)
     name = Column(String((100)),nullable=False, unique=True)
-    role = Column(SQLEnum(UserRole,name="userrole"), default=UserRole.guest, nullable=False,index=True)
+    role = Column(SQLEnum(PlanAudiance,name="planaudiance"), default=PlanAudiance.user, nullable=False,index=True)
     
     storage_limit_bytes = Column(BigInteger, nullable=False, default=5.0,index=True)  # Storage limit in GB
     price_cents= Column(BigInteger, nullable=False, default=0, index=True)  # Price in cents
