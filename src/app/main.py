@@ -63,5 +63,3 @@ async def general_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error"}
     )
-
-app.include_router(api_router, prefix="/api/v1")

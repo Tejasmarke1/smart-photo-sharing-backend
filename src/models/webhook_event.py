@@ -29,8 +29,3 @@ class WebhookEvent(Base, TimestampMixin):
     
     def __repr__(self) -> str:
         return f'<WebhookEvent(id={self.id}, provider={self.provider}, event_type={self.event_type}, processed={self.processed})>'
-    
-    
-    
-    
-    
