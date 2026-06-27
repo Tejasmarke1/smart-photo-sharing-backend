@@ -1,8 +1,9 @@
-"""Authentication endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks, File, UploadFile
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
+from src.services.storage.s3 import S3Service
+import secrets
 
 from src.db.base import get_db
 from src.models.user import User
@@ -425,3 +426,48 @@ async def get_active_sessions(
             for s in sessions
         ]
     }
+
+
+@router.post("/profile-picture", summary="Upload a profile picture anonymously during signup")
+async def upload_profile_picture(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload a profile picture before user signup.
+    Returns the public S3 URL of the uploaded image.
+    """
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be an image"
+        )
+    
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:  # Max 5MB
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image must be less than 5MB"
+        )
+    
+    s3_service = S3Service()
+    file_ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'jpg'
+    token = secrets.token_urlsafe(16)
+    s3_key = f"profile_pictures/{token}.{file_ext}"
+    
+    try:
+        s3_service.upload_file(
+            file_data=content,
+            s3_key=s3_key,
+            content_type=file.content_type
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+    
+    from src.app.config import settings
+    url = f"https://{settings.S3_BUCKET_NAME}.s3.{settings.S3_REGION}.amazonaws.com/{s3_key}"
+    
+    return {"url": url}
