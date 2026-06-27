@@ -123,6 +123,7 @@ def mock_face(mock_photo):
         brightness_score=0.7,
         created_at=datetime.utcnow()
     )
+    face.person_mapping = None
     return face
 
 
@@ -242,21 +243,15 @@ class TestListAlbumFaces:
         mocker
     ):
         """Test listing faces for non-existent album."""
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=mock_user
-        )
+        session = MagicMock()
+        query = MagicMock()
+        query.filter.return_value.first.return_value = None
+        session.query.return_value = query
+        client.app.dependency_overrides[get_db] = lambda: session
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
-            session = MagicMock()
-            query = MagicMock()
-            query.filter.return_value.first.return_value = None
-            session.query.return_value = query
-            mock_db.return_value = session
-            
-            response = client.get(f"/api/v1/faces/albums/{uuid4()}/faces")
-            
-            assert response.status_code == 404
+        response = client.get(f"/api/v1/faces/albums/{uuid4()}/faces")
+        
+        assert response.status_code == 404
     
     def test_list_faces_access_denied(
         self,
@@ -268,21 +263,19 @@ class TestListAlbumFaces:
         """Test access denied for unauthorized user."""
         # Different user
         other_user = {'id': str(uuid4()), 'role': 'photographer'}
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=other_user
-        )
+        def override_get_other_user():
+            return other_user
+        client.app.dependency_overrides[get_current_user] = override_get_other_user
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
-            session = MagicMock()
-            query = MagicMock()
-            query.filter.return_value.first.return_value = mock_album
-            session.query.return_value = query
-            mock_db.return_value = session
-            
-            response = client.get(f"/api/v1/faces/albums/{mock_album.id}/faces")
-            
-            assert response.status_code == 403
+        session = MagicMock()
+        query = MagicMock()
+        query.filter.return_value.first.return_value = mock_album
+        session.query.return_value = query
+        client.app.dependency_overrides[get_db] = lambda: session
+        
+        response = client.get(f"/api/v1/faces/albums/{mock_album.id}/faces")
+        
+        assert response.status_code == 403
     
     def test_list_faces_with_quality_filter(
         self,
@@ -293,38 +286,32 @@ class TestListAlbumFaces:
         mocker
     ):
         """Test face listing with quality filters."""
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=mock_user
+        session = MagicMock()
+        
+        album_query = MagicMock()
+        album_query.filter.return_value.first.return_value = mock_album
+        
+        faces_query = MagicMock()
+        faces_query.join.return_value = faces_query
+        faces_query.filter.return_value = faces_query
+        faces_query.count.return_value = 1
+        faces_query.order_by.return_value = faces_query
+        faces_query.offset.return_value = faces_query
+        faces_query.limit.return_value.all.return_value = [mock_face]
+        
+        session.query.side_effect = [album_query, faces_query]
+        client.app.dependency_overrides[get_db] = lambda: session
+        
+        response = client.get(
+            f"/api/v1/faces/albums/{mock_album.id}/faces",
+            params={
+                'min_blur_score': 0.5,
+                'min_brightness_score': 0.5,
+                'min_confidence': 0.8
+            }
         )
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
-            session = MagicMock()
-            
-            album_query = MagicMock()
-            album_query.filter.return_value.first.return_value = mock_album
-            
-            faces_query = MagicMock()
-            faces_query.join.return_value = faces_query
-            faces_query.filter.return_value = faces_query
-            faces_query.count.return_value = 1
-            faces_query.order_by.return_value = faces_query
-            faces_query.offset.return_value = faces_query
-            faces_query.limit.return_value.all.return_value = [mock_face]
-            
-            session.query.side_effect = [album_query, faces_query]
-            mock_db.return_value = session
-            
-            response = client.get(
-                f"/api/v1/faces/albums/{mock_album.id}/faces",
-                params={
-                    'min_blur_score': 0.5,
-                    'min_brightness_score': 0.5,
-                    'min_confidence': 0.8
-                }
-            )
-            
-            assert response.status_code == 200
+        assert response.status_code == 200
 
 
 # ============================================================================
@@ -344,49 +331,44 @@ class TestLabelFace:
         mocker
     ):
         """Test labeling face with new person name."""
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=mock_user
+        session = MagicMock()
+        
+        # Setup mocks
+        face_query = MagicMock()
+        face_query.filter.return_value.first.return_value = mock_face
+        
+        photo_query = MagicMock()
+        photo_query.filter.return_value.first.return_value = mock_photo
+        
+        album_query = MagicMock()
+        album_query.filter.return_value.first.return_value = mock_album
+        
+        person_query = MagicMock()
+        person_query.filter.return_value.first.return_value = None
+        
+        mapping_query = MagicMock()
+        mapping_query.filter.return_value.first.return_value = None
+        
+        session.query.side_effect = [
+            face_query,
+            photo_query,
+            album_query,
+            photo_query,
+            album_query,
+            person_query,
+            mapping_query
+        ]
+        
+        client.app.dependency_overrides[get_db] = lambda: session
+        
+        response = client.post(
+            f"/api/v1/faces/faces/{mock_face.id}/label",
+            json={'person_name': 'Jane Doe'}
         )
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
-            session = MagicMock()
-            
-            # Setup mocks
-            face_query = MagicMock()
-            face_query.filter.return_value.first.return_value = mock_face
-            
-            photo_query = MagicMock()
-            photo_query.filter.return_value.first.return_value = mock_photo
-            
-            album_query = MagicMock()
-            album_query.filter.return_value.first.return_value = mock_album
-            
-            person_query = MagicMock()
-            person_query.filter.return_value.first.return_value = None
-            
-            mapping_query = MagicMock()
-            mapping_query.filter.return_value.first.return_value = None
-            
-            session.query.side_effect = [
-                face_query,
-                photo_query,
-                album_query,
-                person_query,
-                person_query,
-                mapping_query
-            ]
-            
-            mock_db.return_value = session
-            
-            response = client.post(
-                f"/api/v1/faces/faces/{mock_face.id}/label",
-                json={'person_name': 'Jane Doe'}
-            )
-            
-            assert response.status_code == 200
-            session.add.assert_called()
-            session.commit.assert_called()
+        assert response.status_code == 200
+        session.add.assert_called()
+        session.commit.assert_called()
     
     def test_label_face_with_existing_person(
         self,
@@ -399,45 +381,41 @@ class TestLabelFace:
         mocker
     ):
         """Test labeling face with existing person ID."""
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=mock_user
+        session = MagicMock()
+        
+        face_query = MagicMock()
+        face_query.filter.return_value.first.return_value = mock_face
+        
+        photo_query = MagicMock()
+        photo_query.filter.return_value.first.return_value = mock_photo
+        
+        album_query = MagicMock()
+        album_query.filter.return_value.first.return_value = mock_album
+        
+        person_query = MagicMock()
+        person_query.filter.return_value.first.return_value = mock_person
+        
+        mapping_query = MagicMock()
+        mapping_query.filter.return_value.first.return_value = None
+        
+        session.query.side_effect = [
+            face_query,
+            photo_query,
+            album_query,
+            photo_query,
+            album_query,
+            person_query,
+            mapping_query
+        ]
+        
+        client.app.dependency_overrides[get_db] = lambda: session
+        
+        response = client.post(
+            f"/api/v1/faces/faces/{mock_face.id}/label",
+            json={'person_id': str(mock_person.id)}
         )
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
-            session = MagicMock()
-            
-            face_query = MagicMock()
-            face_query.filter.return_value.first.return_value = mock_face
-            
-            photo_query = MagicMock()
-            photo_query.filter.return_value.first.return_value = mock_photo
-            
-            album_query = MagicMock()
-            album_query.filter.return_value.first.return_value = mock_album
-            
-            person_query = MagicMock()
-            person_query.filter.return_value.first.return_value = mock_person
-            
-            mapping_query = MagicMock()
-            mapping_query.filter.return_value.first.return_value = None
-            
-            session.query.side_effect = [
-                face_query,
-                photo_query,
-                album_query,
-                person_query,
-                mapping_query
-            ]
-            
-            mock_db.return_value = session
-            
-            response = client.post(
-                f"/api/v1/faces/faces/{mock_face.id}/label",
-                json={'person_id': str(mock_person.id)}
-            )
-            
-            assert response.status_code == 200
+        assert response.status_code == 200
     
     def test_label_face_validation_error(
         self,
@@ -447,10 +425,7 @@ class TestLabelFace:
         mocker
     ):
         """Test labeling face with invalid request."""
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=mock_user
-        )
+        client.app.dependency_overrides[get_db] = lambda: MagicMock()
         
         response = client.post(
             f"/api/v1/faces/faces/{mock_face.id}/label",
@@ -478,12 +453,12 @@ class TestSearchBySelfie:
     ):
         """Test successful selfie search."""
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_pipeline',
+            'src.api.v1.endpoints.faces.comparison.get_pipeline',
             return_value=mock_pipeline
         )
         
@@ -491,7 +466,7 @@ class TestSearchBySelfie:
         success, buffer = cv2.imencode('.jpg', sample_image)
         image_bytes = buffer.tobytes()
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
+        with patch('src.api.v1.endpoints.faces.comparison.get_db') as mock_db:
             session = MagicMock()
             
             face_query = MagicMock()
@@ -517,7 +492,7 @@ class TestSearchBySelfie:
     ):
         """Test selfie search with invalid file type."""
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
@@ -536,7 +511,7 @@ class TestSearchBySelfie:
     ):
         """Test selfie search with file too large."""
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
@@ -568,16 +543,16 @@ class TestSearchByEmbedding:
     ):
         """Test successful embedding search."""
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_pipeline',
+            'src.api.v1.endpoints.faces.comparison.get_pipeline',
             return_value=mock_pipeline
         )
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
+        with patch('src.api.v1.endpoints.faces.comparison.get_db') as mock_db:
             session = MagicMock()
             
             face_query = MagicMock()
@@ -611,7 +586,7 @@ class TestSearchByEmbedding:
     ):
         """Test embedding search with wrong dimension."""
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
@@ -683,16 +658,16 @@ class TestFaceSearchPerformance:
         import time
         
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_pipeline',
+            'src.api.v1.endpoints.faces.comparison.get_pipeline',
             return_value=mock_pipeline
         )
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
+        with patch('src.api.v1.endpoints.faces.comparison.get_db') as mock_db:
             session = MagicMock()
             face_query = MagicMock()
             face_query.filter.return_value.all.return_value = []
@@ -732,11 +707,11 @@ class TestEdgeCases:
         mock_face.embedding = None
         
         mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
+            'src.api.v1.endpoints.faces.comparison.get_current_user',
             return_value=mock_user
         )
         
-        with patch('src.api.v1.endpoints.faces.get_face_or_404') as mock_get:
+        with patch('src.api.v1.endpoints.faces.comparison.get_face_or_404') as mock_get:
             mock_get.return_value = mock_face
             
             response = client.get(f"/api/v1/faces/faces/{mock_face.id}/similar")
@@ -751,31 +726,25 @@ class TestEdgeCases:
         mocker
     ):
         """Test clustering album with no faces."""
-        mocker.patch(
-            'src.api.v1.endpoints.faces.get_current_user',
-            return_value=mock_user
+        session = MagicMock()
+        
+        album_query = MagicMock()
+        album_query.filter.return_value.first.return_value = mock_album
+        
+        count_query = MagicMock()
+        count_query.join.return_value = count_query
+        count_query.filter.return_value = count_query
+        count_query.scalar.return_value = 0
+        
+        session.query.side_effect = [album_query, count_query]
+        client.app.dependency_overrides[get_db] = lambda: session
+        
+        response = client.post(
+            f"/api/v1/faces/albums/{mock_album.id}/cluster",
+            json={'min_cluster_size': 5}
         )
         
-        with patch('src.api.v1.endpoints.faces.get_db') as mock_db:
-            session = MagicMock()
-            
-            album_query = MagicMock()
-            album_query.filter.return_value.first.return_value = mock_album
-            
-            count_query = MagicMock()
-            count_query.join.return_value = count_query
-            count_query.filter.return_value = count_query
-            count_query.scalar.return_value = 0
-            
-            session.query.side_effect = [album_query, count_query]
-            mock_db.return_value = session
-            
-            response = client.post(
-                f"/api/v1/faces/albums/{mock_album.id}/cluster",
-                json={'min_cluster_size': 5}
-            )
-            
-            assert response.status_code == 400
+        assert response.status_code == 400
 
 
 if __name__ == "__main__":

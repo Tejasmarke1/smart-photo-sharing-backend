@@ -1,7 +1,7 @@
 ﻿# smart-photo-sharing-backend
 
 cat > README.md << 'EOF'
-# Kwikpic Backend
+# Kwiksnap Backend
 
 AI-powered event photo-sharing platform backend.
 

@@ -61,3 +61,7 @@ logs/
 
 # Docker
 *.pid
+
+# Backups and scratch scripts
+*.bak
+scratch/

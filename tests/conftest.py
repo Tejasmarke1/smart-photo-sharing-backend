@@ -4,6 +4,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+# Bypass Redis in tests
+import src.core.rate_limiter
+src.core.rate_limiter.r = None
+
 from src.app.main import app
 from src.db.base import Base, get_db
 

@@ -1,4 +1,4 @@
-﻿"""Import all models for Alembic."""
+"""Import all models for Alembic."""
 from .base import TimestampMixin, SoftDeleteMixin
 from .enums import (
     UserRole,
@@ -26,6 +26,8 @@ from .login_history import LoginHistory
 from .webhook_event import WebhookEvent
 from .plan import Plan
 from .storage_usage import StorageUsage
+from .device_token import DeviceToken
+from .notification import Notification
 
 __all__ = [
     "TimestampMixin",
@@ -54,4 +56,6 @@ __all__ = [
     "WebhookEvent",
     "Plan",
     "StorageUsage",
+    "DeviceToken",
+    "Notification",
 ]

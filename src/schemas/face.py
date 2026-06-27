@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from pydantic import ValidationInfo
 
 
@@ -67,14 +67,15 @@ class FaceLabelRequest(BaseModel):
     person_name: Optional[str] = Field(None, description="New person name")
     is_manual: bool = Field(True, description="Manual vs automatic assignment")
     
-    @field_validator('person_name')
-    def validate_person_name(cls, v: Optional[str], info: ValidationInfo):
-        data = info.data or {}
-        if not data.get('person_id') and not v:
+    @model_validator(mode='after')
+    def validate_id_or_name(self) -> 'FaceLabelRequest':
+        if not self.person_id and not self.person_name:
             raise ValueError("Either person_id or person_name must be provided")
-        if v and len(v.strip()) < 2:
+        if self.person_name and len(self.person_name.strip()) < 2:
             raise ValueError("Person name must be at least 2 characters")
-        return v.strip() if v else v
+        if self.person_name:
+            self.person_name = self.person_name.strip()
+        return self
 
 
 class FaceSearchRequest(BaseModel):

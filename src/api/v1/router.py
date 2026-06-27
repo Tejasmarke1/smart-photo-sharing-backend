@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from src.api.v1.endpoints import auth, albums, photos, uploads, faces, search, payments, persons, jobs
+from src.api.v1.endpoints import auth, albums, photos, uploads, faces, search, payments, persons, jobs, admin, device_tokens
 from src.api.v1.websockets import notifications
 
 
@@ -15,6 +15,8 @@ api_router.include_router(persons.router, prefix="/persons", tags=["persons"])
 api_router.include_router(search.router, prefix="/search", tags=["search"])
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(device_tokens.router, prefix="/device-tokens", tags=["device-tokens"])
 
 # WebSocket endpoints
 api_router.include_router(notifications.router, tags=["websockets"])

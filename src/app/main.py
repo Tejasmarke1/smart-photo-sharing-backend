@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
@@ -26,10 +26,21 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Sentry initialization
+    if settings.SENTRY_DSN:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.ENVIRONMENT,
+            integrations=[FastApiIntegration(transaction_style="endpoint")],
+            traces_sample_rate=1.0 if settings.DEBUG else 0.1,
+        )
+
     # Middleware
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure properly in production
+        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -38,6 +49,11 @@ def create_application() -> FastAPI:
 
     # Routers
     application.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+    # Prometheus instrumentation
+    if settings.ENABLE_PROMETHEUS:
+        from prometheus_fastapi_instrumentator import Instrumentator
+        Instrumentator().instrument(application).expose(application)
 
     return application
 

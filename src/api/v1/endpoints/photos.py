@@ -103,6 +103,7 @@ def list_photos_in_album(
     status: Optional[PhotoStatus] = Query(None, description='Filter by status'),
     order_by: str = Query('created_at', description='Field to sort by'),
     order_desc: bool = Query(True, description='Sort descending'),
+    sharing_code: Optional[str] = Query(None, description='Optional sharing code for access'),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -128,7 +129,15 @@ def list_photos_in_album(
             detail='Album not found'
         )
     
-    if current_user.role != 'admin' and album.photographer_id != current_user.id:
+    # Check authorization
+    is_authorized = (
+        current_user.role == 'admin' or
+        album.photographer_id == current_user.id or
+        album.is_public or
+        (sharing_code and album.sharing_code == sharing_code)
+    )
+    
+    if not is_authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Not authorized to access this album'
@@ -168,6 +177,7 @@ def search_photos(
     query: str = Query(..., min_length=1, description='Search term'),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
+    sharing_code: Optional[str] = Query(None, description='Optional sharing code for access'),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -186,8 +196,19 @@ def search_photos(
     if not album:
         raise HTTPException(status_code=404, detail='Album not found')
     
-    if current_user.role != 'admin' and album.photographer_id != current_user.id:
-        raise HTTPException(status_code=403, detail='Not authorized')
+    # Check authorization
+    is_authorized = (
+        current_user.role == 'admin' or
+        album.photographer_id == current_user.id or
+        album.is_public or
+        (sharing_code and album.sharing_code == sharing_code)
+    )
+    
+    if not is_authorized:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Not authorized to access this album'
+        )
     
     # Search photos
     skip = (page - 1) * size
@@ -670,12 +691,19 @@ def download_photo(
     # Verify permission
     if current_user.role != 'admin':
         if not photo.album or photo.album.photographer_id != current_user.id:
-            # TODO: Check if user has paid for download
-            # if not check_download_payment(photo_id, current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail='Not authorized to download this photo'
+            # Check if it's a public album or sharing_code matches
+            sharing_code = download_request.extra_data.get('sharing_code') if (download_request.extra_data and isinstance(download_request.extra_data, dict)) else None
+            is_authorized = (
+                photo.album and (
+                    photo.album.is_public or
+                    (sharing_code and photo.album.sharing_code == sharing_code)
+                )
             )
+            if not is_authorized:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail='Not authorized to download this photo'
+                )
     
     # Select S3 key based on quality
     if download_request.quality == 'thumbnail':

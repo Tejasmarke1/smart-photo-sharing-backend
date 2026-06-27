@@ -17,8 +17,19 @@ from src.app.main import app
 
 
 @pytest.fixture
-def client(mocker):
-    """FastAPI test client with dependency overrides."""
-    # No setup needed, just return the client
+def client(db):
+    """FastAPI test client with database dependency overrides."""
+    from src.db.base import get_db
     from fastapi.testclient import TestClient
-    return TestClient(app)
+    
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+            
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+

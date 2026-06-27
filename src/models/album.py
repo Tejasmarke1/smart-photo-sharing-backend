@@ -1,5 +1,5 @@
-﻿"""Album model."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text
+"""Album model."""
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
@@ -8,6 +8,7 @@ import secrets
 from src.db.base import Base
 from .base import TimestampMixin, SoftDeleteMixin
 
+JSON_TYPE = JSONB().with_variant(JSON, "sqlite")
 
 
 class Album(Base, TimestampMixin, SoftDeleteMixin):
@@ -39,7 +40,7 @@ class Album(Base, TimestampMixin, SoftDeleteMixin):
     
     # Metadata
     cover_photo_url = Column(String(512), nullable=True)
-    extra_data = Column(JSONB, nullable=True)  # JSONB
+    extra_data = Column(JSON_TYPE, nullable=True)  # JSONB
     
     # Relationships
     photographer = relationship('User', back_populates='albums', foreign_keys=[photographer_id])

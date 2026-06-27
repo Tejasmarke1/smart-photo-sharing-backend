@@ -1,5 +1,5 @@
 """Application configuration using Pydantic Settings (ENV ONLY)."""
-from typing import Optional
+from typing import Optional, List
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(..., env="DEBUG")
     SECRET_KEY: str = Field(..., env="SECRET_KEY")
     API_V1_PREFIX: str = Field(..., env="API_V1_PREFIX")
+    BACKEND_CORS_ORIGINS: List[str] = Field(default=["*"], env="BACKEND_CORS_ORIGINS")
 
     # Database
     DB_USER: str = Field(..., env="DB_USER")
@@ -118,6 +119,10 @@ class Settings(BaseSettings):
     OTP_VERIFY_LOCK_SECS: int = Field(..., env="OTP_VERIFY_LOCK_SECS")
     
     FACE_DEVICE: str = Field(..., env="FACE_DEVICE")  
+
+    # Firebase & Notification settings
+    FIREBASE_SERVICE_ACCOUNT_PATH: str = Field("firebase-service-account.json", env="FIREBASE_SERVICE_ACCOUNT_PATH")
+    FRONTEND_URL: str = Field("http://localhost:3000", env="FRONTEND_URL")
 
 
 settings = Settings()

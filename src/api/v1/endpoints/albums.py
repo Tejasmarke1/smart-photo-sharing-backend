@@ -74,13 +74,18 @@ def create_album(
 @router.get('/{album_id}', response_model=AlbumDetailResponse)
 def get_album(
     album_id: UUID,
+    sharing_code: Optional[str] = Query(None, description='Optional sharing code for access'),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get album details with counts.
     
-    Users can only access their own albums unless they are admin.
+    Access is granted if:
+    - User is admin
+    - User is the photographer who owns the album
+    - The album is public
+    - A matching sharing code is provided
     """
     repo = AlbumRepository(db)
     
@@ -92,8 +97,15 @@ def get_album(
             detail='Album not found'
         )
     
-    # Check ownership (users can only see their own albums, unless admin)
-    if current_user.role != 'admin' and album.photographer_id != current_user.id:
+    # Check authorization
+    is_authorized = (
+        current_user.role == 'admin' or
+        album.photographer_id == current_user.id or
+        album.is_public or
+        (sharing_code and album.sharing_code == sharing_code)
+    )
+    
+    if not is_authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Not authorized to access this album'
@@ -101,6 +113,36 @@ def get_album(
     
     # Get counts
     album_data = repo.get_with_counts(album_id)
+    
+    return AlbumDetailResponse(
+        **album.__dict__,
+        photo_count=album_data['photo_count'],
+        face_count=album_data['face_count'],
+        person_count=album_data['person_count'],
+        photographer_name=album.photographer.name if album.photographer else None,
+        photographer_email=album.photographer.email if album.photographer else None
+    )
+
+
+@router.get('/code/{sharing_code}', response_model=AlbumDetailResponse)
+def get_album_by_code(
+    sharing_code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Resolve an album's sharing code to its full details.
+    Allows authenticated users to access shared albums.
+    """
+    repo = AlbumRepository(db)
+    album = repo.get_by_sharing_code(sharing_code)
+    if not album:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Album not found'
+        )
+    
+    album_data = repo.get_with_counts(album.id)
     
     return AlbumDetailResponse(
         **album.__dict__,

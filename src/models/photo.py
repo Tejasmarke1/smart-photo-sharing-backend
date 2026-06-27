@@ -1,5 +1,5 @@
 """Photo model."""
-from sqlalchemy import Column, String, Integer, BigInteger, ForeignKey, Enum as SQLEnum, Text, DateTime
+from sqlalchemy import Column, String, Integer, BigInteger, ForeignKey, Enum as SQLEnum, Text, DateTime, JSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
@@ -7,6 +7,8 @@ import uuid
 from src.db.base import Base
 from .base import TimestampMixin, SoftDeleteMixin
 from .enums import PhotoStatus
+
+JSON_TYPE = JSONB().with_variant(JSON, "sqlite")
 
 
 class Photo(Base, TimestampMixin, SoftDeleteMixin):
@@ -34,7 +36,7 @@ class Photo(Base, TimestampMixin, SoftDeleteMixin):
     processing_error = Column(Text, nullable=True)
     
     # EXIF and metadata
-    exif = Column(JSONB, nullable=True)  # Fixed: Use JSONB
+    exif = Column(JSON_TYPE, nullable=True)  # Fixed: Use JSONB
     taken_at = Column(DateTime(timezone=True), nullable=True)  # Fixed: Use DateTime instead of String
     camera_model = Column(String(255), nullable=True)
     
@@ -47,7 +49,7 @@ class Photo(Base, TimestampMixin, SoftDeleteMixin):
     watermarked_url = Column(String(512), nullable=True)
     
     # Additional metadata
-    extra_data = Column(JSONB, nullable=True)  # Fixed: Use JSONB
+    extra_data = Column(JSON_TYPE, nullable=True)  # Fixed: Use JSONB
     
     # Relationships
     album = relationship('Album', back_populates='photos')

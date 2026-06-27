@@ -24,14 +24,14 @@ def test_create_user(db_session):
         email="test@example.com",
         phone="+919876543210",
         hashed_password="hashed_password",
-        role=UserRole.PHOTOGRAPHER,
+        role=UserRole.photographer,
     )
     db_session.add(user)
     db_session.commit()
     
     assert user.id is not None
     assert user.email == "test@example.com"
-    assert user.role == UserRole.PHOTOGRAPHER
+    assert user.role == UserRole.photographer
 
 
 def test_create_album(db_session):
@@ -41,7 +41,7 @@ def test_create_album(db_session):
         email="photo@example.com",
         phone="+919876543210",
         hashed_password="hashed",
-        role=UserRole.PHOTOGRAPHER,
+        role=UserRole.photographer,
     )
     db_session.add(user)
     db_session.commit()
