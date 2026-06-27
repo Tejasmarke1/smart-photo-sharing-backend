@@ -1123,6 +1123,60 @@ async def find_face_outliers(
     return outliers[:limit]
 
 
+@router.post(
+    "/detect-live",
+    summary="Detect faces and landmarks live",
+    description="Analyze a front-camera selfie in real-time, returning bounding box and landmarks using RetinaFace"
+)
+async def detect_live(
+    file: UploadFile = File(...),
+    pipeline: FacePipeline = Depends(get_pipeline)
+):
+    """
+    Directly run the RetinaFace detector on the uploaded image.
+    Returns whether a face was detected, the confidence, the bounding box, and the 5 facial landmarks.
+    """
+    if file.content_type not in ['image/jpeg', 'image/png']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG and PNG images are supported"
+        )
+    
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if image is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image file"
+        )
+    
+    # Convert BGR to RGB for RetinaFace
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    
+    # Run the detector
+    detected_faces = pipeline.detector.detect(image_rgb)
+    
+    if not detected_faces:
+        return {"detected": False}
+    
+    # Return the highest-confidence face
+    best_face = detected_faces[0]
+    
+    landmarks_list = []
+    if best_face.landmarks is not None:
+        # Convert numpy array to list of floats
+        landmarks_list = best_face.landmarks.tolist()
+        
+    return {
+        "detected": True,
+        "bbox": list(best_face.bbox),
+        "confidence": float(best_face.confidence),
+        "landmarks": landmarks_list
+    }
+
+
 # ============================================================================
 # Face Reprocessing Endpoints
 # ============================================================================
