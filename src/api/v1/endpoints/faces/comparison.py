@@ -215,7 +215,9 @@ async def search_by_selfie(
             
             # Get thumbnail URL
             thumbnail_url = None
-            if face.thumbnail_s3_key:
+            if face.photo and face.photo.thumbnail_medium_url:
+                thumbnail_url = s3_service.sign_url_if_s3(face.photo.thumbnail_medium_url)
+            elif face.thumbnail_s3_key:
                 thumbnail_url = s3_service.generate_presigned_download_url(
                     face.thumbnail_s3_key,
                     expires_in=3600
@@ -236,7 +238,8 @@ async def search_by_selfie(
                 person_id=person_id,
                 person_name=person_name,
                 bbox=json.loads(face.bbox),
-                confidence=face.confidence
+                confidence=face.confidence,
+                photo_date=face.photo.created_at if face.photo else None
             ))
         
         logger.info(f"Selfie search returned {len(response)} results")

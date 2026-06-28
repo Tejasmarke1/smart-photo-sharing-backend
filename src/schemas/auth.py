@@ -46,6 +46,8 @@ class VerifyOTPResponse(BaseModel):
     user_exists: bool
     requires_signup: bool
     temp_token: Optional[str] = None  # Temporary token for signup
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
 
 
 class SignupRequest(BaseModel):

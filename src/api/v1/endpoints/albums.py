@@ -24,6 +24,7 @@ from src.schemas.album import (
 )
 from src.core.security import verify_password
 from src.app.config import settings
+from src.services.storage.s3 import S3Service
 
 
 router = APIRouter()
@@ -32,8 +33,11 @@ router = APIRouter()
 def build_album_response(album_data: dict) -> AlbumResponse:
     """Build AlbumResponse from album and counts."""
     album = album_data['album']
+    s3_service = S3Service()
+    cover_photo_url = s3_service.sign_url_if_s3(album.cover_photo_url)
     return AlbumResponse(
-        **album.__dict__,
+        **{k: v for k, v in album.__dict__.items() if k != 'cover_photo_url'},
+        cover_photo_url=cover_photo_url,
         photo_count=album_data.get('photo_count', 0),
         face_count=album_data.get('face_count', 0),
         person_count=album_data.get('person_count', 0)
@@ -63,8 +67,11 @@ def create_album(
     repo = AlbumRepository(db)
     album = repo.create_album(album_data, current_user.id)
     
+    s3_service = S3Service()
+    cover_photo_url = s3_service.sign_url_if_s3(album.cover_photo_url)
     return AlbumResponse(
-        **album.__dict__,
+        **{k: v for k, v in album.__dict__.items() if k != 'cover_photo_url'},
+        cover_photo_url=cover_photo_url,
         photo_count=0,
         face_count=0,
         person_count=0
@@ -114,8 +121,11 @@ def get_album(
     # Get counts
     album_data = repo.get_with_counts(album_id)
     
+    s3_service = S3Service()
+    cover_photo_url = s3_service.sign_url_if_s3(album.cover_photo_url)
     return AlbumDetailResponse(
-        **album.__dict__,
+        **{k: v for k, v in album.__dict__.items() if k != 'cover_photo_url'},
+        cover_photo_url=cover_photo_url,
         photo_count=album_data['photo_count'],
         face_count=album_data['face_count'],
         person_count=album_data['person_count'],
@@ -144,8 +154,11 @@ def get_album_by_code(
     
     album_data = repo.get_with_counts(album.id)
     
+    s3_service = S3Service()
+    cover_photo_url = s3_service.sign_url_if_s3(album.cover_photo_url)
     return AlbumDetailResponse(
-        **album.__dict__,
+        **{k: v for k, v in album.__dict__.items() if k != 'cover_photo_url'},
+        cover_photo_url=cover_photo_url,
         photo_count=album_data['photo_count'],
         face_count=album_data['face_count'],
         person_count=album_data['person_count'],

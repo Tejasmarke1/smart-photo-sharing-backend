@@ -97,6 +97,7 @@ class FaceSearchResponse(BaseModel):
     person_name: Optional[str] = None
     bbox: Dict[str, int]
     confidence: float
+    photo_date: Optional[datetime] = None
 
 
 class FaceClusterRequest(BaseModel):

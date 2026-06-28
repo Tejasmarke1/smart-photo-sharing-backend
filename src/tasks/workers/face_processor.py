@@ -154,11 +154,26 @@ def process_faces_task(
             raise ValueError(f"Failed to download photo from {photo.s3_key}")
         
         # Decode image
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
+        image = None
+        try:
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        except Exception:
+            pass
+            
         if image is None:
-            raise ValueError("Failed to decode image")
+            # Fallback to pillow-heif for HEIC formats
+            try:
+                from PIL import Image
+                import io
+                from pillow_heif import register_heif_opener
+                register_heif_opener()
+                
+                pil_img = Image.open(io.BytesIO(image_bytes))
+                image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            except Exception as heic_err:
+                logger.error(f"Failed decoding as HEIC/standard format: {heic_err}")
+                raise ValueError("Failed to decode image")
         
         # Convert BGR to RGB
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -175,8 +190,55 @@ def process_faces_task(
             save_crops=False  # We'll handle saving separately
         )
         
+        # Generate thumbnails and save metadata
+        self.update_state(
+            state='PROCESSING',
+            meta={'status': 'Generating thumbnails', 'progress': 50}
+        )
+        
+        thumbnails = {}
+        sizes = {'small': 150, 'medium': 600, 'large': 1200}
+        h_orig, w_orig = image.shape[:2]
+        photo.width = w_orig
+        photo.height = h_orig
+        
+        for size_name, max_dim in sizes.items():
+            try:
+                scale = max_dim / max(h_orig, w_orig)
+                if scale < 1.0:
+                    h_new = int(h_orig * scale)
+                    w_new = int(w_orig * scale)
+                    img_resized = cv2.resize(image, (w_new, h_new), interpolation=cv2.INTER_AREA)
+                else:
+                    img_resized = image
+                
+                success, thumb_buffer = cv2.imencode('.jpg', img_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if success:
+                    thumb_key = self.s3_service.generate_thumbnail_key(photo.s3_key, size_name)
+                    if not thumb_key.endswith('.jpg'):
+                        thumb_key = thumb_key.rsplit('.', 1)[0] + '.jpg'
+                    
+                    upload_success = self.s3_service.upload_file(
+                        thumb_buffer.tobytes(),
+                        thumb_key,
+                        content_type='image/jpeg'
+                    )
+                    if upload_success:
+                        bucket_url = f"https://{self.s3_service.bucket_name}.s3.{self.s3_service.s3_client.meta.region_name}.amazonaws.com/"
+                        thumbnails[size_name] = bucket_url + thumb_key
+            except Exception as e:
+                logger.error(f"Failed to generate {size_name} thumbnail for photo {photo_id}: {e}")
+                
+        photo.thumbnail_small_url = thumbnails.get('small')
+        photo.thumbnail_medium_url = thumbnails.get('medium')
+        photo.thumbnail_large_url = thumbnails.get('large')
+        
+        from src.models.enums import PhotoStatus
+        photo.status = PhotoStatus.done
+        
         if not face_results:
             logger.info(f"No faces detected in photo {photo_id}")
+            db.commit()
             return {
                 'status': 'completed',
                 'photo_id': photo_id,
@@ -282,17 +344,25 @@ def process_faces_task(
         logger.error(f"Face processing failed for photo {photo_id}: {str(e)}")
         logger.error(traceback.format_exc())
         
-        # Update task state
-        self.update_state(
-            state='FAILURE',
-            meta={
-                'status': 'Failed',
-                'error': str(e),
-                'traceback': traceback.format_exc()
-            }
-        )
-        
-        raise
+        # Update photo status to failed in database
+        try:
+            from src.models.enums import PhotoStatus
+            err_db = self.get_db()
+            photo_obj = err_db.query(Photo).filter(Photo.id == UUID(photo_id)).first()
+            if photo_obj:
+                photo_obj.status = PhotoStatus.failed
+                photo_obj.processing_error = str(e)
+                err_db.commit()
+            err_db.close()
+        except Exception as db_err:
+            logger.error(f"Failed to update photo failure status in DB: {db_err}")
+            
+        return {
+            'status': 'failed',
+            'photo_id': photo_id,
+            'error': str(e),
+            'processing_time': time.time() - start_time
+        }
         
     finally:
         db.close()

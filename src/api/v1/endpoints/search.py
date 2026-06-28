@@ -87,6 +87,24 @@ def get_pipeline() -> FacePipeline:
     if _pipeline is None:
         _pipeline = create_pipeline()
         logger.info("Face pipeline initialized for search")
+        
+    # Sync index with DB dynamically if count differs
+    if _pipeline and _pipeline.search_engine:
+        try:
+            from src.db.base import SessionLocal
+            from src.models.face import Face
+            db = SessionLocal()
+            try:
+                num_indexed = _pipeline.search_engine.index.ntotal
+                db_count = db.query(Face).filter(Face.embedding.isnot(None)).count()
+                if num_indexed != db_count:
+                    logger.info(f"🔄 Syncing FAISS index (indexed: {num_indexed}, DB: {db_count})")
+                    _pipeline.rebuild_index_from_db(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to sync FAISS index: {e}")
+            
     return _pipeline
 
 
@@ -190,7 +208,9 @@ def build_search_result(
     album = db.query(Album).filter(Album.id == photo.album_id).first() if photo else None
     
     thumbnail_url = None
-    if face.thumbnail_s3_key:
+    if photo and photo.thumbnail_medium_url:
+        thumbnail_url = s3_service.sign_url_if_s3(photo.thumbnail_medium_url)
+    elif face.thumbnail_s3_key:
         thumbnail_url = s3_service.generate_presigned_download_url(
             face.thumbnail_s3_key, expires_in=3600
         )
@@ -466,7 +486,9 @@ async def search_by_person(
         
         # Get thumbnail
         thumbnail_url = None
-        if photo.s3_key:
+        if photo.thumbnail_medium_url:
+            thumbnail_url = s3_service.sign_url_if_s3(photo.thumbnail_medium_url)
+        elif photo.s3_key:
             thumbnail_url = s3_service.generate_presigned_download_url(
                 photo.s3_key, expires_in=3600
             )

@@ -37,13 +37,22 @@ def build_photo_response(photo_data: dict, generate_urls: bool = True) -> PhotoR
         'face_count': photo_data.get('face_count', 0)
     }
     
-    # Generate presigned URL for original if needed
+    # Generate presigned URL for original and thumbnails
     if generate_urls:
-        # TODO: Implement S3 presigned URL generation
-        # from src.services.storage.s3 import S3Service
-        # s3_service = S3Service()
-        # response_dict['original_url'] = s3_service.generate_presigned_url(photo.s3_key)
-        pass
+        from src.services.storage.s3 import S3Service
+        try:
+            s3_service = S3Service()
+            original_url = s3_service.generate_presigned_download_url(photo.s3_key)
+            response_dict['original_url'] = original_url
+            
+            # Use signed thumbnails if present, fallback to signed original_url
+            response_dict['thumbnail_small_url'] = s3_service.sign_url_if_s3(photo.thumbnail_small_url) or original_url
+            response_dict['thumbnail_medium_url'] = s3_service.sign_url_if_s3(photo.thumbnail_medium_url) or original_url
+            response_dict['thumbnail_large_url'] = s3_service.sign_url_if_s3(photo.thumbnail_large_url) or original_url
+            response_dict['watermarked_url'] = s3_service.sign_url_if_s3(photo.watermarked_url) or original_url
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to generate presigned URLs for photo: {e}")
     
     return PhotoResponse(**response_dict)
 

@@ -698,7 +698,7 @@ class S3Service:
 
     def download_file(self, s3_key: str) -> bytes:
         """
-        Download file from S3 and return raw bytes.
+        Download file from S3 and return raw bytes (retries on connection drops).
         
         Args:
             s3_key: S3 object key
@@ -709,28 +709,43 @@ class S3Service:
         Raises:
             S3ServiceError: If download fails
         """
-        try:
-            response = self.s3_client.get_object(
-                Bucket=self.bucket_name,
-                Key=s3_key
-            )
-            file_bytes = response['Body'].read()
-            logger.debug(f"Downloaded {len(file_bytes)} bytes from: {s3_key}")
-            return file_bytes
-            
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', '')
-            if error_code == 'NoSuchKey':
-                raise S3ServiceError(f"Object not found: {s3_key}")
-            logger.error(f"Error downloading file: {e}")
-            raise S3ServiceError(f"Failed to download file: {str(e)}")
+        import time
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.s3_client.get_object(
+                    Bucket=self.bucket_name,
+                    Key=s3_key
+                )
+                file_bytes = response['Body'].read()
+                logger.debug(f"Downloaded {len(file_bytes)} bytes from: {s3_key}")
+                return file_bytes
+                
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                if error_code == 'NoSuchKey':
+                    raise S3ServiceError(f"Object not found: {s3_key}")
+                logger.warning(f"S3 download attempt {attempt+1}/{max_retries} failed for {s3_key}: {e}")
+                if attempt == max_retries - 1:
+                    logger.error(f"Error downloading file: {e}")
+                    raise S3ServiceError(f"Failed to download file: {str(e)}")
+                time.sleep(retry_delay * (attempt + 1))
+            except Exception as e:
+                logger.warning(f"S3 download attempt {attempt+1}/{max_retries} failed for {s3_key}: {e}")
+                if attempt == max_retries - 1:
+                    logger.error(f"Error downloading file: {e}")
+                    raise S3ServiceError(f"Failed to download file: {str(e)}")
+                time.sleep(retry_delay * (attempt + 1))
 
     def upload_file(
         self,
         file_data: bytes,
         s3_key: str,
         content_type: str = 'application/octet-stream',
-        metadata: Optional[Dict[str, str]] = None
+        metadata: Optional[Dict[str, str]] = None,
+        public: bool = False
     ) -> bool:
         """
         Upload file bytes directly to S3.
@@ -740,6 +755,7 @@ class S3Service:
             s3_key: S3 object key
             content_type: MIME type
             metadata: Optional metadata dict
+            public: If True, set ACL='public-read' (if allowed by bucket)
             
         Returns:
             True if successful, False otherwise
@@ -757,8 +773,21 @@ class S3Service:
             
             if metadata:
                 params['Metadata'] = metadata
+                
+            if public:
+                params['ACL'] = 'public-read'
             
-            self.s3_client.put_object(**params)
+            try:
+                self.s3_client.put_object(**params)
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                if public and error_code in ('AccessDenied', 'InvalidAccessControlList', 'AccessDeniedException', 'AccessControlListNotSupported'):
+                    logger.warning("Bucket blocks public ACLs. Retrying S3 upload without public ACL.")
+                    params.pop('ACL', None)
+                    self.s3_client.put_object(**params)
+                else:
+                    raise
+            
             logger.info(f"Uploaded {len(file_data)} bytes to: {s3_key}")
             return True
             
@@ -781,3 +810,29 @@ class S3Service:
         """
         self.delete_object(s3_key)
         return True
+
+    def sign_url_if_s3(self, url: Optional[str], expires_in: int = 3600) -> Optional[str]:
+        """
+        If the url is a direct S3 URL of our bucket, generate a presigned download URL for it.
+        Otherwise, return the URL as is.
+        """
+        if not url:
+            return None
+        
+        # Check if it matches our S3 bucket URL structure
+        prefix1 = f"https://{self.bucket_name}.s3.{settings.S3_REGION}.amazonaws.com/"
+        prefix2 = f"https://{self.bucket_name}.s3.amazonaws.com/"
+        
+        key = None
+        if url.startswith(prefix1):
+            key = url[len(prefix1):]
+        elif url.startswith(prefix2):
+            key = url[len(prefix2):]
+            
+        if key:
+            try:
+                return self.generate_presigned_download_url(s3_key=key, expires_in=expires_in)
+            except Exception as e:
+                logger.error(f"Error signing URL {url}: {e}")
+                return url
+        return url

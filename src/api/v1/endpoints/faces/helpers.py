@@ -104,6 +104,24 @@ def get_pipeline() -> FacePipeline:
     if _pipeline is None:
         _pipeline = create_pipeline()
         logger.info("Face pipeline initialized")
+        
+    # Sync index with DB dynamically if count differs
+    if _pipeline and _pipeline.search_engine:
+        try:
+            from src.db.base import SessionLocal
+            from src.models.face import Face
+            db = SessionLocal()
+            try:
+                num_indexed = _pipeline.search_engine.index.ntotal
+                db_count = db.query(Face).filter(Face.embedding.isnot(None)).count()
+                if num_indexed != db_count:
+                    logger.info(f"🔄 Syncing FAISS index (indexed: {num_indexed}, DB: {db_count})")
+                    _pipeline.rebuild_index_from_db(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to sync FAISS index: {e}")
+            
     return _pipeline
 
 

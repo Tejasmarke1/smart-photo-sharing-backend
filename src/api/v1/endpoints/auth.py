@@ -194,7 +194,9 @@ async def verify_otp(
             message="Login successful",
             user_exists=True,
             requires_signup=False,
-            temp_token=None
+            temp_token=None,
+            access_token=access_token,
+            refresh_token=refresh_token_str
         )
     else:
         # New user - needs to signup
@@ -390,6 +392,8 @@ async def get_current_user_info(
     current_user: User = Depends(get_current_user)
 ):
     """Get current user information."""
+    s3_service = S3Service()
+    profile_pic = s3_service.sign_url_if_s3(current_user.profile_picture_url)
     return UserResponse(
         id=str(current_user.id),
         name=current_user.name,
@@ -398,7 +402,7 @@ async def get_current_user_info(
         role=current_user.role.value,
         is_active=current_user.is_active,
         is_verified=current_user.is_verified,
-        profile_picture_url=current_user.profile_picture_url,
+        profile_picture_url=profile_pic,
         created_at=current_user.created_at
     )
 
@@ -459,7 +463,8 @@ async def upload_profile_picture(
         s3_service.upload_file(
             file_data=content,
             s3_key=s3_key,
-            content_type=file.content_type
+            content_type=file.content_type,
+            public=True
         )
     except Exception as e:
         raise HTTPException(

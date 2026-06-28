@@ -201,8 +201,13 @@ def notify_upload_complete(
     
     photo_repo.update_status(photo.id, PhotoStatus.processing)
     
-    # TODO: Enqueue processing
-    # background_tasks.add_task(process_photo.delay, str(photo.id))
+    # Enqueue face processing task
+    try:
+        from src.tasks.workers.face_processor import process_faces_task
+        process_faces_task.delay(str(photo.id))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to enqueue face processing task: {e}")
     
     return UploadCompleteResponse(
         photo_id=photo.id,
@@ -244,6 +249,12 @@ def notify_bulk_upload_complete(
                 photo_repo.update_exif(upload.photo_id, upload.exif)
             
             photo_repo.update_status(upload.photo_id, PhotoStatus.processing)
+            try:
+                from src.tasks.workers.face_processor import process_faces_task
+                process_faces_task.delay(str(upload.photo_id))
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to enqueue bulk face processing task: {e}")
             success_count += 1
             
         except Exception:
@@ -413,6 +424,12 @@ def complete_multipart_upload(
         photo_repo.update_exif(request.photo_id, request.exif)
     
     photo_repo.update_status(request.photo_id, PhotoStatus.processing)
+    try:
+        from src.tasks.workers.face_processor import process_faces_task
+        process_faces_task.delay(str(request.photo_id))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to enqueue multipart face processing task: {e}")
     
     return UploadCompleteResponse(
         photo_id=request.photo_id,
